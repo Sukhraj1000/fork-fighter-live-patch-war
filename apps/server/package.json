@@ -17,7 +17,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@daytona/sdk": "^0.207.0",
     "@fork-fighter/contracts": "workspace:*",
+    "@fork-fighter/director-context": "workspace:*",
+    "@fork-fighter/game-core": "workspace:*",
+    "@fork-fighter/gm-orchestrator": "workspace:*",
+    "@fork-fighter/mutation-runtime": "workspace:*",
+    "@fork-fighter/mutation-validator": "workspace:*",
     "fastify": "^5.6.2"
   },
   "devDependencies": {

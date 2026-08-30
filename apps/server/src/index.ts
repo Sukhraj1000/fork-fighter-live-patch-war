@@ -1,6 +1,9 @@
 import { pathToFileURL } from 'node:url'
 
 export * from './jsonl-log.js'
+export * from './daytona-agent-brain.js'
+export * from './integration-dependencies.js'
+export * from './live-match.js'
 export * from './match-host.js'
 export * from './mock-dependencies.js'
 export * from './redaction.js'

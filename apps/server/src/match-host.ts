@@ -652,6 +652,7 @@ export class MatchHost {
       }
     }
     this.#sse.close()
+    await Promise.all(this.#dependencies.agents.map((agent) => agent.close?.()))
     await this.#dependencies.logStore.close?.()
   }
 

@@ -1,6 +1,9 @@
 node_modules/
 .pnpm-store/
 dist/
+data/
+test-results/
+playwright-report/
 .env
 .DS_Store
 npm-debug.log*
