@@ -52,7 +52,10 @@ function providerFailure(
 class AgentBrainAdapter implements GameMasterAgent {
   constructor(
     readonly persona: GameMasterPersona,
-    readonly brain: AgentBrain & { close?: () => Promise<void> },
+    readonly brain: AgentBrain & {
+      closeMatch?: (matchId: string) => Promise<void>
+      close?: () => Promise<void>
+    },
   ) {}
 
   async propose(
@@ -77,6 +80,10 @@ class AgentBrainAdapter implements GameMasterAgent {
 
   async close(): Promise<void> {
     await this.brain.close?.()
+  }
+
+  async closeMatch(matchId: string): Promise<void> {
+    await this.brain.closeMatch?.(matchId)
   }
 }
 
@@ -118,7 +125,10 @@ export function adaptAgentBrains(brains: GameMasterBrains): readonly GameMasterA
     (persona) =>
       new AgentBrainAdapter(
         persona,
-        brains[persona] as AgentBrain & { close?: () => Promise<void> },
+        brains[persona] as AgentBrain & {
+          closeMatch?: (matchId: string) => Promise<void>
+          close?: () => Promise<void>
+        },
       ),
   )
 }

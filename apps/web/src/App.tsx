@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GameMasterPersona } from '@fork-fighter/contracts'
 import {
   createLiveMatch,
   endLiveMatch,
   getLiveMatch,
+  getRuntimeInfo,
+  sendRunnerTelemetry,
   subscribeToMatch,
 } from './api/live-match-client'
 import { ArenaCanvas } from './components/ArenaCanvas'
@@ -33,6 +35,17 @@ const emptyStats: EndlessRunStats = {
   timeScore: 0,
   pickupScore: 0,
   score: 0,
+}
+
+const BEST_SCORE_KEY = 'fork-fighter:best-score'
+
+function storedBestScore(): number {
+  try {
+    const value = Number.parseInt(window.localStorage.getItem(BEST_SCORE_KEY) ?? '0', 10)
+    return Number.isSafeInteger(value) && value > 0 ? value : 0
+  } catch {
+    return 0
+  }
 }
 
 const localPatchCycle = [
@@ -210,12 +223,15 @@ export function App() {
   const [live, setLive] = useState<LiveMatchPayload>()
   const [localSnapshot, setLocalSnapshot] = useState<GameStateViewModel>()
   const [transport, setTransport] = useState<'server' | 'local'>('server')
+  const [provider, setProvider] = useState<'mock' | 'daytona' | 'local'>('local')
   const [activity, setActivity] = useState<ActivityItem[]>([])
   const [stats, setStats] = useState<EndlessRunStats>(emptyStats)
   const [result, setResult] = useState<EndlessRunResult>()
+  const [bestScore, setBestScore] = useState(storedBestScore)
   const [runKey, setRunKey] = useState(0)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState('')
+  const lastRunnerTelemetryAt = useRef(-1_000)
 
   const appendActivity = useCallback((items: ActivityItem[]) => {
     if (items.length === 0) return
@@ -295,6 +311,7 @@ export function App() {
     setLocalSnapshot(undefined)
     setResult(undefined)
     setStats(emptyStats)
+    lastRunnerTelemetryAt.current = -1_000
     setActivity([{
       id: `local-drafting-${Date.now()}`,
       at: '00:00',
@@ -306,24 +323,50 @@ export function App() {
     if (previousMatchId) void endLiveMatch(previousMatchId).catch(() => undefined)
 
     try {
-      const created = await createLiveMatch()
+      const [created, runtime] = await Promise.all([
+        createLiveMatch(),
+        getRuntimeInfo(),
+      ])
       setLive(created)
       setTransport('server')
+      setProvider(runtime.provider)
       setRunKey((current) => current + 1)
       setPhase('playing')
     } catch {
       const localRunId = Date.now()
       setLocalSnapshot(localDemoSnapshot(localRunId))
       setTransport('local')
+      setProvider('local')
       setRunKey((current) => current + 1)
       setPhase('playing')
     }
   }
 
+  const handleStats = useCallback((nextStats: EndlessRunStats) => {
+    setStats(nextStats)
+    if (!live?.matchId || !nextStats.alive) return
+    if (nextStats.elapsedMs - lastRunnerTelemetryAt.current < 1_000) return
+    lastRunnerTelemetryAt.current = nextStats.elapsedMs
+    void sendRunnerTelemetry(live.matchId, nextStats).catch(() => setConnected(false))
+  }, [live?.matchId])
+
   const handleGameOver = useCallback((nextResult: EndlessRunResult) => {
     setResult(nextResult)
+    setBestScore((current) => {
+      const nextBest = Math.max(current, nextResult.score)
+      try {
+        window.localStorage.setItem(BEST_SCORE_KEY, String(nextBest))
+      } catch {
+        // A blocked storage API should never make the run unplayable.
+      }
+      return nextBest
+    })
     setPhase('gameover')
-    if (live?.matchId) void endLiveMatch(live.matchId).catch(() => undefined)
+    if (live?.matchId) {
+      void sendRunnerTelemetry(live.matchId, nextResult)
+        .catch(() => undefined)
+        .finally(() => endLiveMatch(live.matchId).catch(() => undefined))
+    }
   }, [live?.matchId])
 
   if (!snapshot || (phase !== 'playing' && phase !== 'gameover')) {
@@ -334,6 +377,7 @@ export function App() {
           <small>ENDLESS RUNNER // LIVE GAME MASTER PATCHES</small>
           <h1><span>FORK</span>/FIGHTER</h1>
           <p>Run forever. Grab fork shards. Jump every obstacle. Three long-running Game Masters watch your run and deploy typed, validated traps to end it.</p>
+          {bestScore > 0 && <div className="launch-best"><small>PERSONAL BEST</small><strong>{bestScore.toLocaleString('en-GB')}</strong></div>}
           <button type="button" onClick={() => void startRun()} disabled={phase === 'starting'} data-testid="start-run">
             {phase === 'starting' ? 'STARTING RUN…' : phase === 'error' ? 'TRY AGAIN' : 'START LIVE RUN'}
           </button>
@@ -365,7 +409,7 @@ export function App() {
             <ArenaCanvas
               key={runKey}
               snapshot={snapshot}
-              callbacks={{ onStats: setStats, onGameOver: handleGameOver }}
+              callbacks={{ onStats: handleStats, onGameOver: handleGameOver }}
             />
             <div className="game-hud" aria-label="Run status">
               <div className="score-box"><small>SCORE</small><b data-testid="live-score">{stats.score.toLocaleString('en-GB')}</b></div>
@@ -382,6 +426,7 @@ export function App() {
                   <span>FORK SHARDS: {result.pickups}</span><b>+{result.pickupScore.toLocaleString('en-GB')}</b>
                 </div>
                 <strong>{result.score.toLocaleString('en-GB')}</strong>
+                <p className="best-score">PERSONAL BEST: {bestScore.toLocaleString('en-GB')}</p>
                 <p>KILLED BY: {result.killer.author.toUpperCase()} — {result.killer.title}</p>
                 <button type="button" onClick={() => void startRun()} data-testid="restart-run">RESTART RUN</button>
               </div>
@@ -410,7 +455,7 @@ export function App() {
           </ol>
         </aside>
       </section>
-      <footer className="page-footer"><span>TYPED OBSTACLES ONLY</span><span className="shell-safe"><i /> GAME SHELL {transport === 'local' ? 'FAILSAFE' : connected ? 'LIVE' : 'RECONNECTING'}</span><span>{transport === 'local' ? 'LOCAL DEMO FALLBACK' : 'LONG-RUNNING DAYTONA GAME MASTERS'}</span></footer>
+      <footer className="page-footer"><span>TYPED OBSTACLES ONLY</span><span className="shell-safe"><i /> GAME SHELL {transport === 'local' ? 'FAILSAFE' : connected ? 'LIVE' : 'RECONNECTING'}</span><span>{provider === 'daytona' ? 'DAYTONA // 3 PARALLEL CODEX WORKERS' : provider === 'mock' ? 'LOCAL MOCK GAME MASTERS' : 'LOCAL DEMO FALLBACK'}</span></footer>
     </main>
   )
 }

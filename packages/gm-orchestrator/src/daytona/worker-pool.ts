@@ -17,6 +17,8 @@ export interface DaytonaGameMasterPoolOptions {
   readonly snapshotName: string
   /** Name of the Daytona organization secret containing the Codex API key. */
   readonly codexSecretName: string
+  readonly codexAuthMode?: 'api-key' | 'chatgpt'
+  readonly codexAuthJson?: string
   readonly provider: DaytonaWorkerProvider
   readonly ttlMinutes?: number
   readonly startupTimeoutMs?: number
@@ -47,6 +49,24 @@ export class DaytonaGameMasterPool {
       options.codexSecretName,
       'Codex secret name',
     )
+    const codexAuthMode = options.codexAuthMode ?? 'api-key'
+    if (codexAuthMode === 'chatgpt') {
+      const auth = options.codexAuthJson
+      if (!auth) throw new TypeError('ChatGPT Codex auth JSON is required.')
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(auth)
+      } catch {
+        throw new TypeError('ChatGPT Codex auth JSON must be valid JSON.')
+      }
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        (parsed as { auth_mode?: unknown }).auth_mode !== 'chatgpt'
+      ) {
+        throw new TypeError('ChatGPT Codex auth JSON must use chatgpt auth mode.')
+      }
+    }
     const ttlMinutes = options.ttlMinutes ?? 30
     const startupTimeoutMs = options.startupTimeoutMs ?? 20_000
     if (!Number.isInteger(ttlMinutes) || ttlMinutes < 1 || ttlMinutes > 120) {
@@ -72,6 +92,10 @@ export class DaytonaGameMasterPool {
             persona,
             snapshotName,
             codexSecretName,
+            codexAuthMode,
+            ...(options.codexAuthJson === undefined
+              ? {}
+              : { codexAuthJson: options.codexAuthJson }),
             ttlMinutes,
           },
           provider: options.provider,

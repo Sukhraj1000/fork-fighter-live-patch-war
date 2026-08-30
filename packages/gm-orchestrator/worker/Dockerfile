@@ -9,9 +9,9 @@ WORKDIR /opt/fork-fighter-worker
 COPY bin ./bin
 COPY lib ./lib
 
-RUN mkdir -p contract runtime \
+RUN mkdir -p contract runtime /tmp/fork-fighter-codex \
   && chmod 0555 bin/propose bin/test-worker \
-  && chown -R node:node /opt/fork-fighter-worker \
+  && chown -R node:node /opt/fork-fighter-worker /tmp/fork-fighter-codex \
   && ./bin/test-worker --image-build
 
 USER node

@@ -16,6 +16,19 @@ const PLAYER_X = 148
 const PLAYER_GROUND_Y = GROUND_Y - 42
 const GRAVITY = 2_050
 const JUMP_VELOCITY = -770
+const START_GRACE_MS = 1_800
+const JUMP_BUFFER_MS = 150
+const RUNNER_ACTION_TEXTURE = 'fork-fighter-runner'
+const RUNNER_RUN_TEXTURE = 'fork-fighter-run-cycle'
+const RUNNER_HIT_TEXTURE = 'fork-fighter-hit'
+const RUNNER_RUN_ANIMATION = 'fork-fighter-run-cycle'
+const RUNNER_FRAME_WIDTH = 384
+const RUNNER_FRAME_HEIGHT = 512
+const RUNNER_SCALE = 0.3
+const RUNNER_Y_OFFSET = -22
+const RUNNER_RUN_Y_OFFSETS = [0, 0, 1, 3, 20, 20, 19, 19]
+const RUNNER_JUMP_Y_OFFSET = 42
+const RUNNER_HIT_Y_OFFSET = 13
 
 const COLORS = {
   navy: 0x17214a,
@@ -54,10 +67,14 @@ type RunnerKeys = {
   w: Phaser.Input.Keyboard.Key
 }
 
+type PlayerMotion = 'run' | 'jump' | 'hit'
+
 export class RunnerScene extends Phaser.Scene {
   private snapshot: GameStateViewModel
   private readonly callbacks: EndlessRunCallbacks
   private player?: Phaser.GameObjects.Container
+  private playerSprite?: Phaser.GameObjects.Sprite
+  private playerShadow?: Phaser.GameObjects.Ellipse
   private keys?: RunnerKeys
   private speedLines: Phaser.GameObjects.Rectangle[] = []
   private obstacles: MovingObstacle[] = []
@@ -66,10 +83,16 @@ export class RunnerScene extends Phaser.Scene {
   private elapsedMs = 0
   private pickupCount = 0
   private velocityY = 0
-  private obstacleClockMs = 1_250
-  private pickupClockMs = 720
+  private obstacleClockMs = 2_400
+  private pickupClockMs = 900
   private lastStatsAtMs = -1_000
   private alive = true
+  private pointerJumpQueued = false
+  private jumpBufferMs = 0
+  private startGraceMs = START_GRACE_MS
+  private wasGrounded = true
+  private landingSquashMs = 0
+  private playerMotion?: PlayerMotion
 
   constructor(snapshot: GameStateViewModel, callbacks: EndlessRunCallbacks) {
     super({ key: 'endless-runner' })
@@ -77,11 +100,26 @@ export class RunnerScene extends Phaser.Scene {
     this.callbacks = callbacks
   }
 
+  preload() {
+    const frameConfig = {
+      frameWidth: RUNNER_FRAME_WIDTH,
+      frameHeight: RUNNER_FRAME_HEIGHT,
+    }
+    this.load.spritesheet(RUNNER_ACTION_TEXTURE, '/assets/fork-fighter-runner.png', frameConfig)
+    this.load.spritesheet(RUNNER_RUN_TEXTURE, '/assets/fork-fighter-run-cycle.png', frameConfig)
+    this.load.image(RUNNER_HIT_TEXTURE, '/assets/fork-fighter-hit.png')
+  }
+
   create() {
     this.cameras.main.setRoundPixels(true)
     this.drawBackdrop()
+    this.createRunnerAnimations()
+    this.playerShadow = this.add
+      .ellipse(PLAYER_X, GROUND_Y + 3, 68, 14, COLORS.navyDark, 0.28)
+      .setDepth(3)
     this.player = this.drawRunner()
     this.bindControls()
+    this.showStartSignal()
     this.emitStats()
     this.maybeQueuePatch(this.snapshot)
   }
@@ -90,6 +128,11 @@ export class RunnerScene extends Phaser.Scene {
     if (!this.alive || !this.player) return
 
     const frameMs = Math.min(delta, 40)
+    if (this.startGraceMs > 0) {
+      this.startGraceMs = Math.max(0, this.startGraceMs - frameMs)
+      this.updateBackdrop(frameMs * 0.2)
+      return
+    }
     this.elapsedMs += frameMs
     this.updateBackdrop(frameMs)
     this.updatePlayer(frameMs)
@@ -107,6 +150,9 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private bindControls() {
+    this.input.on('pointerdown', () => {
+      this.pointerJumpQueued = true
+    })
     if (!this.input.keyboard) return
     this.keys = {
       jump: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
@@ -118,13 +164,22 @@ export class RunnerScene extends Phaser.Scene {
   private updatePlayer(deltaMs: number) {
     if (!this.player) return
     const grounded = this.player.y >= PLAYER_GROUND_Y - 1
-    const wantsJump = this.keys && (
+    const wantsKeyboardJump = this.keys && (
       Phaser.Input.Keyboard.JustDown(this.keys.jump) ||
       Phaser.Input.Keyboard.JustDown(this.keys.up) ||
       Phaser.Input.Keyboard.JustDown(this.keys.w)
     )
+    const wantsJump = Boolean(wantsKeyboardJump || this.pointerJumpQueued)
+    this.pointerJumpQueued = false
+    if (wantsJump) this.jumpBufferMs = JUMP_BUFFER_MS
+    else this.jumpBufferMs = Math.max(0, this.jumpBufferMs - deltaMs)
 
-    if (grounded && wantsJump) this.velocityY = JUMP_VELOCITY
+    if (grounded && this.jumpBufferMs > 0) {
+      this.jumpBufferMs = 0
+      this.velocityY = JUMP_VELOCITY
+      this.setPlayerMotion('jump')
+      this.emitFootfallPixels(false)
+    }
     this.velocityY += GRAVITY * (deltaMs / 1_000)
     this.player.y += this.velocityY * (deltaMs / 1_000)
 
@@ -133,9 +188,29 @@ export class RunnerScene extends Phaser.Scene {
       this.velocityY = 0
     }
 
-    const bob = grounded ? Math.sin(this.elapsedMs / 85) * 2 : 0
-    this.player.setRotation(grounded ? 0 : -0.08)
-    ;(this.player.getAt(0) as Phaser.GameObjects.Container).setY(18 + bob)
+    const isGrounded = this.player.y >= PLAYER_GROUND_Y - 1
+    if (isGrounded && !this.wasGrounded) {
+      this.landingSquashMs = 120
+      this.emitFootfallPixels(true)
+    }
+
+    this.setPlayerMotion(isGrounded ? 'run' : 'jump')
+    this.alignPlayerFrame()
+    this.player.setRotation(isGrounded ? 0 : Phaser.Math.Clamp(this.velocityY / 8_000, -0.08, 0.06))
+
+    if (this.landingSquashMs > 0) {
+      this.landingSquashMs = Math.max(0, this.landingSquashMs - deltaMs)
+      this.player.setScale(1.08, 0.9)
+    } else {
+      this.player.setScale(1)
+    }
+
+    const jumpHeight = Math.max(0, PLAYER_GROUND_Y - this.player.y)
+    const shadowScale = Phaser.Math.Clamp(1 - jumpHeight / 260, 0.42, 1)
+    this.playerShadow
+      ?.setScale(shadowScale, Phaser.Math.Linear(0.58, 1, shadowScale))
+      .setAlpha(Phaser.Math.Linear(0.1, 0.28, shadowScale))
+    this.wasGrounded = isGrounded
   }
 
   private updateSpawns(deltaMs: number) {
@@ -153,7 +228,7 @@ export class RunnerScene extends Phaser.Scene {
         title: this.elapsedMs > 14_000 ? 'Spike Parade' : 'Warm-Up Trouble',
         sourceMutationId: `baseline-${Math.floor(this.elapsedMs)}`,
       })
-      this.obstacleClockMs = Math.max(900, 2_050 - this.elapsedMs / 18)
+      this.obstacleClockMs = Math.max(1_100, 2_300 - this.elapsedMs / 22)
     }
 
     if (this.pickupClockMs <= 0) {
@@ -163,7 +238,7 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private updateObstacles(deltaMs: number) {
-    const speed = 300 + Math.min(230, this.elapsedMs / 95)
+    const speed = 290 + Math.min(200, this.elapsedMs / 110)
     for (let index = this.obstacles.length - 1; index >= 0; index -= 1) {
       const obstacle = this.obstacles[index]
       obstacle.view.x -= speed * (deltaMs / 1_000)
@@ -181,7 +256,7 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private updatePickups(deltaMs: number) {
-    const speed = 300 + Math.min(230, this.elapsedMs / 95)
+    const speed = 290 + Math.min(200, this.elapsedMs / 110)
     for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
       const pickup = this.pickups[index]
       pickup.view.x -= speed * (deltaMs / 1_000)
@@ -196,10 +271,10 @@ export class RunnerScene extends Phaser.Scene {
   private checkCollisions() {
     if (!this.player) return
     const playerBounds = new Phaser.Geom.Rectangle(
-      this.player.x - 20,
-      this.player.y - 38,
-      40,
-      77,
+      this.player.x - 17,
+      this.player.y - 34,
+      34,
+      68,
     )
 
     for (const obstacle of this.obstacles) {
@@ -325,8 +400,23 @@ export class RunnerScene extends Phaser.Scene {
   private endRun(author: GameMasterPersona, title: string) {
     if (!this.alive || !this.player) return
     this.alive = false
-    this.player.setAlpha(0.72)
-    this.player.setRotation(Math.PI / 2)
+    this.setPlayerMotion('hit')
+    this.player.setRotation(-0.16)
+    this.tweens.add({
+      targets: this.player,
+      x: this.player.x - 18,
+      y: this.player.y + 5,
+      duration: 180,
+      ease: 'Stepped',
+    })
+    this.tweens.add({
+      targets: this.playerSprite,
+      alpha: 0.34,
+      duration: 55,
+      yoyo: true,
+      repeat: 2,
+      ease: 'Stepped',
+    })
     this.cameras.main.shake(180, 0.012)
     this.cameras.main.flash(140, 239, 71, 111, false)
     const stats = this.stats(false)
@@ -350,6 +440,26 @@ export class RunnerScene extends Phaser.Scene {
   private emitStats() {
     this.lastStatsAtMs = this.elapsedMs
     this.callbacks.onStats(this.stats())
+  }
+
+  private showStartSignal() {
+    const banner = this.add.container(WIDTH / 2, 146).setDepth(20)
+    const panel = this.add.rectangle(0, 0, 430, 86, COLORS.navy)
+    const inner = this.add.rectangle(0, 0, 416, 72, COLORS.gold)
+    const title = this.add
+      .text(0, -14, 'GET READY', this.pixelText(12, COLORS.navy))
+      .setOrigin(0.5)
+    const hint = this.add
+      .text(0, 16, 'TAP / SPACE / W / UP TO JUMP', this.pixelText(7, COLORS.purple))
+      .setOrigin(0.5)
+    banner.add([panel, inner, title, hint])
+
+    this.time.delayedCall(1_100, () => {
+      title.setText('RUN!')
+      hint.setText('ONE HIT = GAME OVER')
+      inner.setFillStyle(COLORS.mint)
+    })
+    this.time.delayedCall(START_GRACE_MS, () => banner.destroy())
   }
 
   private showPatchSignal(patch: ObstaclePatch) {
@@ -411,19 +521,82 @@ export class RunnerScene extends Phaser.Scene {
 
   private drawRunner() {
     const runner = this.add.container(PLAYER_X, PLAYER_GROUND_Y).setDepth(4)
-    const body = this.add.container(0, 18)
-    body.add([
-      this.add.rectangle(-24, -6, 34, 8, COLORS.pink),
-      this.add.rectangle(0, -24, 34, 30, COLORS.blue),
-      this.add.rectangle(3, -40, 28, 25, COLORS.mint),
-      this.add.rectangle(8, -43, 7, 7, COLORS.navy),
-      this.add.rectangle(-10, 4, 11, 28, 0x1555a9),
-      this.add.rectangle(10, 4, 11, 28, 0x1555a9),
-      this.add.rectangle(-14, 20, 22, 8, COLORS.mint),
-      this.add.rectangle(15, 20, 22, 8, COLORS.mint),
-    ])
-    runner.add(body)
+    this.playerSprite = this.add
+      .sprite(0, RUNNER_Y_OFFSET, RUNNER_RUN_TEXTURE, 0)
+      .setScale(RUNNER_SCALE)
+    runner.add(this.playerSprite)
+    this.setPlayerMotion('run')
     return runner
+  }
+
+  private createRunnerAnimations() {
+    if (this.anims.exists(RUNNER_RUN_ANIMATION)) return
+    this.anims.create({
+      key: RUNNER_RUN_ANIMATION,
+      frames: this.anims.generateFrameNumbers(RUNNER_RUN_TEXTURE, { start: 0, end: 7 }),
+      frameRate: 14,
+      repeat: -1,
+    })
+  }
+
+  private setPlayerMotion(motion: PlayerMotion) {
+    if (!this.playerSprite || this.playerMotion === motion) return
+    this.playerMotion = motion
+    if (motion === 'run') {
+      this.playerSprite.play(RUNNER_RUN_ANIMATION, true)
+      return
+    }
+    this.playerSprite.stop()
+    if (motion === 'jump') {
+      this.playerSprite.setTexture(RUNNER_ACTION_TEXTURE, 5)
+    } else {
+      this.playerSprite.setTexture(RUNNER_HIT_TEXTURE)
+    }
+    this.alignPlayerFrame()
+  }
+
+  private alignPlayerFrame() {
+    if (!this.playerSprite || !this.playerMotion) return
+    if (this.playerMotion === 'run') {
+      const frameIndex = Number(this.playerSprite.frame.name)
+      this.playerSprite.setPosition(
+        0,
+        RUNNER_Y_OFFSET + (RUNNER_RUN_Y_OFFSETS[frameIndex] ?? 0),
+      )
+      return
+    }
+    this.playerSprite.setPosition(
+      0,
+      RUNNER_Y_OFFSET + (
+        this.playerMotion === 'jump' ? RUNNER_JUMP_Y_OFFSET : RUNNER_HIT_Y_OFFSET
+      ),
+    )
+  }
+
+  private emitFootfallPixels(landing: boolean) {
+    for (let index = 0; index < (landing ? 6 : 4); index += 1) {
+      const direction = index % 2 === 0 ? -1 : 1
+      const pixel = this.add
+        .rectangle(
+          PLAYER_X - 8 + index * 3,
+          GROUND_Y - 2,
+          landing ? 7 : 5,
+          landing ? 7 : 5,
+          index % 3 === 0 ? COLORS.gold : COLORS.cream,
+          0.9,
+        )
+        .setDepth(3)
+      this.tweens.add({
+        targets: pixel,
+        x: pixel.x + direction * (18 + index * 2),
+        y: pixel.y - (landing ? 12 + index * 2 : 8 + index),
+        alpha: 0,
+        scale: 0.25,
+        duration: 220 + index * 18,
+        ease: 'Stepped',
+        onComplete: () => pixel.destroy(),
+      })
+    }
   }
 
   private pixelText(size: number, color: number): Phaser.Types.GameObjects.Text.TextStyle {

@@ -10,6 +10,56 @@ import {
 import { ManualClock } from './helpers.js'
 
 describe('playable integration loop', () => {
+  it('feeds actual endless-run score and survival telemetry into Game Master context', async () => {
+    const clock = new ManualClock()
+    const server = createMatchServer({
+      dependencies: {
+        agents: adaptAgentBrains(createMockGameMasterBrains()),
+        clock,
+        cadenceMs: 2_000,
+        proposalDeadlineMs: 500,
+      },
+      live: { autoTick: false },
+    })
+
+    try {
+      await server.live.create({ matchId: 'runner-telemetry', autoStart: false })
+      const response = await server.app.inject({
+        method: 'POST',
+        url: '/api/live-matches/runner-telemetry/runner-telemetry',
+        payload: {
+          elapsedMs: 32_000,
+          pickups: 7,
+          score: 3_900,
+          alive: true,
+        },
+      })
+
+      expect(response.statusCode).toBe(202)
+      expect(response.json().live.match.context.telemetry).toMatchObject({
+        health: 100,
+        coresBanked: 7,
+        primaryObjectiveProgress: 32_000 / 60_000,
+        challengeTrend: 'too_easy',
+      })
+
+      const capped = await server.app.inject({
+        method: 'POST',
+        url: '/api/live-matches/runner-telemetry/runner-telemetry',
+        payload: {
+          elapsedMs: 33_000,
+          pickups: 150,
+          score: 18_300,
+          alive: true,
+        },
+      })
+      expect(capped.statusCode).toBe(202)
+      expect(capped.json().live.match.context.telemetry.coresBanked).toBe(100)
+    } finally {
+      await server.app.close()
+    }
+  })
+
   it('connects core, telemetry, mock brains, validation, selection, runtime, and host lifecycle', async () => {
     const clock = new ManualClock()
     const logStore = new InMemoryMatchLogStore()

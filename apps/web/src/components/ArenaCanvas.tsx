@@ -40,8 +40,9 @@ export function ArenaCanvas({ snapshot, callbacks }: ArenaCanvasProps) {
     <div
       className="arena-canvas"
       ref={hostRef}
-      role="img"
-      aria-label={`${snapshot.sector} endless runner arena. Jump over Game Master obstacles and collect fork shards.`}
+      role="application"
+      tabIndex={0}
+      aria-label={`${snapshot.sector} endless runner arena. Press Space, W, Up, or tap the arena to jump over Game Master obstacles and collect fork shards.`}
     >
       <div className="loading-sprite" aria-hidden="true">LOADING RUN...</div>
     </div>

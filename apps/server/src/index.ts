@@ -1,4 +1,5 @@
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { config } from 'dotenv'
 
 export * from './jsonl-log.js'
 export * from './daytona-agent-brain.js'
@@ -13,12 +14,15 @@ export * from './types.js'
 import { createMatchServer } from './server.js'
 
 async function main(): Promise<void> {
+  config({ path: new URL('../../../.env', import.meta.url), quiet: true })
   const port = Number.parseInt(process.env.PORT ?? '3001', 10)
   const host = process.env.HOST ?? '0.0.0.0'
-  const clientDistPath = process.env.CLIENT_DIST_PATH
+  const clientDistPath =
+    process.env.CLIENT_DIST_PATH ??
+    fileURLToPath(new URL('../../web/dist', import.meta.url))
   const server = createMatchServer({
     fastify: { logger: true, disableRequestLogging: true },
-    ...(clientDistPath ? { clientDistPath } : {}),
+    clientDistPath,
   })
   await server.app.listen({ port, host })
 }

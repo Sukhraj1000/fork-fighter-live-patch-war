@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "dev": "pnpm --filter @fork-fighter/server dev",
-    "play": "pnpm run build:e2e && CLIENT_DIST_PATH=apps/web/dist pnpm --filter @fork-fighter/server dev",
+    "play": "pnpm run build:e2e && pnpm --filter @fork-fighter/server dev",
     "daytona:smoke": "node --import tsx src/index.ts",
     "build": "pnpm run build:root && pnpm --recursive --if-present run build",
     "build:e2e": "pnpm --filter @fork-fighter/web build",

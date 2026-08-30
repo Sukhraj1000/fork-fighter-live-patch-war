@@ -35,7 +35,7 @@ silhouette stays brighter and more directional than the evil game masters.
 The renderer supports five explicit view-model motions:
 
 - **Idle:** subtle two-pixel breathing and visor blink.
-- **Run:** alternating arms and legs, four-pixel body bounce, scarf follow-through.
+- **Run:** eight-frame alternating arms and legs, stepped body bounce, and scarf follow-through.
 - **Jump:** tucked knees, raised arms, small rotational arc.
 - **Dash:** compressed horizontal pose, extended limbs, three stepped speed trails.
 - **Hit:** recoil angle, short positional shake, warning pixels, brief flicker.

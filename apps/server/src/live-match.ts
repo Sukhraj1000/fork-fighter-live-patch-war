@@ -5,6 +5,7 @@ import {
   type GameEventBatch,
   type GameState,
   type PlayerCommand,
+  type RunTelemetry,
 } from '@fork-fighter/contracts'
 import { aggregateRunTelemetry } from '@fork-fighter/director-context'
 import { startGame, stepGame } from '@fork-fighter/game-core'
@@ -50,6 +51,14 @@ interface LiveMatchSession {
   ticking: boolean
   closed: boolean
   lastTelemetryTick: number
+  runnerTelemetry?: EndlessRunnerTelemetry
+}
+
+export interface EndlessRunnerTelemetry {
+  elapsedMs: number
+  pickups: number
+  score: number
+  alive: boolean
 }
 
 export interface LiveMatchSnapshot {
@@ -166,6 +175,19 @@ export class LiveMatchCoordinator {
     return this.getSnapshot(matchId)
   }
 
+  async ingestRunnerTelemetry(
+    matchId: string,
+    telemetry: EndlessRunnerTelemetry,
+  ): Promise<LiveMatchSnapshot> {
+    const session = this.#session(matchId)
+    if (session.closed) {
+      throw new MatchHostError('match_ended', 409, 'Match has ended.')
+    }
+    session.runnerTelemetry = telemetry
+    await this.#publishTelemetry(session)
+    return this.getSnapshot(matchId)
+  }
+
   async step(matchId: string, command?: PlayerCommand): Promise<LiveMatchSnapshot> {
     const session = this.#session(matchId)
     if (command) session.queuedCommands.push(PlayerCommandSchema.parse(command))
@@ -279,7 +301,7 @@ export class LiveMatchCoordinator {
   async #publishTelemetry(session: LiveMatchSession): Promise<void> {
     let snapshot = this.#host.getSnapshot(session.matchId)
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const telemetry = aggregateRunTelemetry({
+      const baseTelemetry = aggregateRunTelemetry({
         matchId: session.matchId,
         patchIndex: snapshot.patchIndex,
         state: session.game,
@@ -287,6 +309,7 @@ export class LiveMatchCoordinator {
         previousTelemetry: snapshot.context.telemetry,
         patchOutcomes: snapshot.recentOutcomes,
       })
+      const telemetry = this.#runnerTelemetry(baseTelemetry, session.runnerTelemetry)
       try {
         await this.#host.ingestTelemetry(session.matchId, telemetry)
         return
@@ -300,6 +323,32 @@ export class LiveMatchCoordinator {
         }
         snapshot = this.#host.getSnapshot(session.matchId)
       }
+    }
+  }
+
+  #runnerTelemetry(
+    base: RunTelemetry,
+    runner: EndlessRunnerTelemetry | undefined,
+  ): RunTelemetry {
+    if (!runner) return base
+    return {
+      ...base,
+      elapsedMs: Math.max(base.elapsedMs, runner.elapsedMs),
+      health: runner.alive ? 100 : 0,
+      coresHeld: 0,
+      coresBanked: Math.min(100, runner.pickups),
+      primaryObjectiveProgress: Math.min(1, runner.elapsedMs / 60_000),
+      recentDamage: runner.alive ? 0 : 100,
+      recentDeaths: runner.alive ? 0 : 1,
+      routeRepetition: 0,
+      lowRiskCoreRate: 0,
+      highRiskCoreRate: Math.min(1, runner.pickups / 10),
+      challengeTrend:
+        !runner.alive && runner.elapsedMs < 12_000
+          ? 'too_hard'
+          : runner.alive && runner.elapsedMs >= 30_000
+            ? 'too_easy'
+            : 'on_target',
     }
   }
 

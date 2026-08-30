@@ -12,9 +12,38 @@
       "replaceableBy": "Any 3:1 transparent PNG with three equal portrait cells"
     },
     {
+      "id": "fork-fighter-run-cycle",
+      "path": "/assets/fork-fighter-run-cycle.png",
+      "type": "transparent 4-by-2 pixel-art run-cycle sprite sheet",
+      "cells": ["run-1", "run-2", "run-3", "run-4", "run-5", "run-6", "run-7", "run-8"],
+      "origin": "OpenAI built-in image generation from the approved Fork Fighter runner reference",
+      "created": "2026-08-30",
+      "provenance": "/assets/PROVENANCE.md",
+      "replaceableBy": "Any transparent 1536-by-1024 PNG with eight chronological 384-by-512 run cells"
+    },
+    {
+      "id": "fork-fighter-hit",
+      "path": "/assets/fork-fighter-hit.png",
+      "type": "transparent isolated player hit sprite",
+      "origin": "Pixel-exact extraction of the approved action sheet hit cell",
+      "created": "2026-08-30",
+      "provenance": "/assets/PROVENANCE.md",
+      "replaceableBy": "Any transparent standalone hit pose with safe edge gutters"
+    },
+    {
+      "id": "fork-fighter-runner",
+      "path": "/assets/fork-fighter-runner.png",
+      "type": "transparent 4-by-2 pixel-art player action sprite sheet",
+      "cells": ["run-1", "run-2", "run-3", "run-4", "idle", "jump", "dash", "hit"],
+      "origin": "OpenAI built-in image generation, transparency cleanup from the approved motion concept",
+      "created": "2026-08-30",
+      "provenance": "/assets/PROVENANCE.md",
+      "replaceableBy": "Any transparent 1536-by-1024 PNG with eight 384-by-512 cells in the same order"
+    },
+    {
       "id": "runner-world",
       "path": "/src/game/RunnerScene.ts",
-      "type": "procedural Phaser pixel art and five-state player motion rig",
+      "type": "Phaser runner world and animated player motion rig",
       "origin": "Project-authored code",
       "replaceableBy": "GameStateViewModel-compatible Phaser scene"
     }

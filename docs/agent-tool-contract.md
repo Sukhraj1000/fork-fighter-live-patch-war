@@ -83,20 +83,27 @@ after delivery.
 ## Credential and network boundary
 
 `DAYTONA_API_KEY` is read only by the server-side Daytona SDK. It is never put in
-a sandbox, request, prompt, proposal, event, log payload, or browser bundle.
+a request, prompt, proposal, event, log payload, or browser bundle.
 
-Workers receive `CODEX_API_KEY` only as a reference to a Daytona organization
-secret named by `DAYTONA_CODEX_SECRET_NAME`. The secret value is not accepted by
-the pool configuration. Configure that Daytona secret to allow only the OpenAI
-API host. Sandboxes are private and their outbound domain allow-list is
-`api.openai.com`. The runner also sets
-`shell_environment_policy.inherit=none`, so model-launched commands cannot read
-the Codex process credential. This follows the
-[official automation credential guidance](https://learn.chatgpt.com/docs/non-interactive-mode#authenticate-in-automation)
-to expose an API key only to the Codex invocation that needs it.
+API-key mode mounts `CODEX_API_KEY` only by reference to the Daytona
+organization secret named by `DAYTONA_CODEX_SECRET_NAME`. The secret value is
+not accepted by the pool configuration. Configure that secret for
+`api.openai.com`; the worker itself also permits only that domain.
 
-Do not use `VITE_*` variables for Daytona, Codex, or provider credentials. Never
-serialize `process.env` into match state or browser-visible diagnostics.
+Trusted ChatGPT mode follows OpenAI's documented headless fallback: set
+`DAYTONA_CODEX_AUTH_MODE=chatgpt` and point `DAYTONA_CODEX_AUTH_FILE` at a
+file-backed Codex `auth.json`. The server validates `auth_mode=chatgpt` and a
+refresh token, then uploads the file directly to each private worker's
+`CODEX_HOME`. It is never included in labels, create parameters, logs, prompts,
+or the proposal gateway. Those workers allow only `chatgpt.com` and OpenAI
+auth domains, are deleted at match end, and retain a TTL cleanup backstop.
+Treat the source file like a password and use this mode only for trusted private
+automation.
+
+The runner sets `shell_environment_policy.inherit=none`, so model-launched
+commands cannot read API-key environment credentials. Do not use `VITE_*`
+variables for Daytona, Codex, or provider credentials, and never serialize
+`process.env` into match state or browser-visible diagnostics.
 
 ## Preparing the reusable snapshot
 
@@ -104,7 +111,7 @@ Create the Daytona organization secret first, then build the snapshot once:
 
 ```bash
 export DAYTONA_API_KEY=...
-export DAYTONA_WORKER_SNAPSHOT=fork-fighter-game-master-codex-v1
+export DAYTONA_WORKER_SNAPSHOT=fork-fighter-game-master-codex-v4
 pnpm --filter @fork-fighter/gm-orchestrator prepare:snapshot
 ```
 

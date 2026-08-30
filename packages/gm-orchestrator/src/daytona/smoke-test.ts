@@ -9,6 +9,8 @@ export interface DaytonaWorkerSmokeTestOptions {
   readonly provider: DaytonaWorkerProvider
   readonly snapshotName: string
   readonly codexSecretName: string
+  readonly codexAuthMode?: 'api-key' | 'chatgpt'
+  readonly codexAuthJson?: string
 }
 
 /** Server-only smoke test for the prepared worker environment. */
@@ -20,6 +22,10 @@ export async function runDaytonaWorkerSmokeTest(
     persona: 'architect',
     snapshotName: options.snapshotName,
     codexSecretName: options.codexSecretName,
+    codexAuthMode: options.codexAuthMode,
+    ...(options.codexAuthJson === undefined
+      ? {}
+      : { codexAuthJson: options.codexAuthJson }),
     ttlMinutes: 10,
   })
 

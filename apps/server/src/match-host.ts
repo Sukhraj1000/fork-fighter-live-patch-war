@@ -635,6 +635,9 @@ export class MatchHost {
       endedAtMs: state.endedAtMs,
       patchIndex: state.patchIndex,
     })
+    await Promise.allSettled(
+      this.#dependencies.agents.map((agent) => agent.closeMatch?.(matchId)),
+    )
     const snapshot = this.getSnapshot(matchId)
     this.#sse.closeMatch(matchId)
     return snapshot
@@ -809,6 +812,19 @@ export class MatchHost {
   ): Promise<void> {
     const now = this.#dependencies.clock.now()
     const mutation = pending.proposal.mutation
+    if (state.activePatches.size > 0) {
+      await this.#record(state, 'patch_cycle_skipped', {
+        patchIndex: pending.patchIndex,
+        reason: 'active_patch_in_progress',
+      })
+      await this.#expireProposal(
+        state,
+        pending.proposal,
+        pending.patchIndex,
+        'Another validated patch is still active.',
+      )
+      return
+    }
     const active: ActivePatch = {
       patchIndex: pending.patchIndex,
       proposal: pending.proposal,
