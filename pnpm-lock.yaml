@@ -38,6 +38,12 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@26.4.0)(tsx@4.23.13)(yaml@2.9.0)
 
+  packages/game-core:
+    dependencies:
+      '@fork-fighter/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
 packages:
 
   '@aws-sdk/checksums@3.1000.29':
