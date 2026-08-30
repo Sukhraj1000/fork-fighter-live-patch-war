@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "game-master-triptych",
+      "path": "/assets/game-master-triptych.png",
+      "type": "pixel-art portrait sprite sheet",
+      "cells": ["architect", "gremlin", "auditor"],
+      "origin": "OpenAI built-in image generation",
+      "created": "2026-08-30",
+      "provenance": "/assets/PROVENANCE.md",
+      "replaceableBy": "Any 3:1 transparent PNG with three equal portrait cells"
+    },
+    {
+      "id": "runner-world",
+      "path": "/src/game/RunnerScene.ts",
+      "type": "procedural Phaser pixel art and five-state player motion rig",
+      "origin": "Project-authored code",
+      "replaceableBy": "GameStateViewModel-compatible Phaser scene"
+    }
+  ]
+}
