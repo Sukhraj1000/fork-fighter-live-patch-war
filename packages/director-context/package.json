@@ -1,0 +1,23 @@
+{
+  "name": "@fork-fighter/director-context",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepare:contracts": "tsc -p ../contracts/tsconfig.json",
+    "prebuild": "pnpm run prepare:contracts",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "pretypecheck": "pnpm run prepare:contracts",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit"
+  }
+}
