@@ -1,5 +1,21 @@
 import Phaser from 'phaser'
-import type { GameStateViewModel, PlayerCommand } from '../model/view-models'
+import type { GameMasterPersona } from '@fork-fighter/contracts'
+import type {
+  EndlessRunCallbacks,
+  EndlessRunStats,
+  ObstacleKind,
+  ObstaclePatch,
+} from '../model/endless-run'
+import { obstaclePatchFromView } from '../model/endless-run'
+import type { GameStateViewModel } from '../model/view-models'
+
+const WIDTH = 960
+const HEIGHT = 540
+const GROUND_Y = 418
+const PLAYER_X = 148
+const PLAYER_GROUND_Y = GROUND_Y - 42
+const GRAVITY = 2_050
+const JUMP_VELOCITY = -770
 
 const COLORS = {
   navy: 0x17214a,
@@ -16,337 +32,398 @@ const COLORS = {
   red: 0xef476f,
 }
 
-type CommandSink = (command: PlayerCommand) => void
+type MovingObstacle = {
+  view: Phaser.GameObjects.Container
+  width: number
+  height: number
+  kind: ObstacleKind
+  author: GameMasterPersona
+  title: string
+  phase: number
+  baseY: number
+}
+
+type MovingPickup = {
+  view: Phaser.GameObjects.Container
+  radius: number
+}
+
+type RunnerKeys = {
+  jump: Phaser.Input.Keyboard.Key
+  up: Phaser.Input.Keyboard.Key
+  w: Phaser.Input.Keyboard.Key
+}
 
 export class RunnerScene extends Phaser.Scene {
   private snapshot: GameStateViewModel
-  private readonly commandSink: CommandSink
+  private readonly callbacks: EndlessRunCallbacks
+  private player?: Phaser.GameObjects.Container
+  private keys?: RunnerKeys
   private speedLines: Phaser.GameObjects.Rectangle[] = []
-  private clouds: Phaser.GameObjects.Container[] = []
-  private runner?: Phaser.GameObjects.Container
-  private lastCommandAt = 0
-  private movementKeys: Partial<
-    Record<'left' | 'right' | 'up' | 'down' | 'dash', Phaser.Input.Keyboard.Key[]>
-  > = {}
+  private obstacles: MovingObstacle[] = []
+  private pickups: MovingPickup[] = []
+  private seenPatchIds = new Set<string>()
+  private elapsedMs = 0
+  private pickupCount = 0
+  private velocityY = 0
+  private obstacleClockMs = 1_250
+  private pickupClockMs = 720
+  private lastStatsAtMs = -1_000
+  private alive = true
 
-  constructor(snapshot: GameStateViewModel, commandSink: CommandSink) {
-    super({ key: 'runner-presentation' })
+  constructor(snapshot: GameStateViewModel, callbacks: EndlessRunCallbacks) {
+    super({ key: 'endless-runner' })
     this.snapshot = snapshot
-    this.commandSink = commandSink
+    this.callbacks = callbacks
   }
 
   create() {
     this.cameras.main.setRoundPixels(true)
-    this.renderSnapshot()
-    this.bindCommands()
+    this.drawBackdrop()
+    this.player = this.drawRunner()
+    this.bindControls()
+    this.emitStats()
+    this.maybeQueuePatch(this.snapshot)
+  }
+
+  update(_time: number, delta: number) {
+    if (!this.alive || !this.player) return
+
+    const frameMs = Math.min(delta, 40)
+    this.elapsedMs += frameMs
+    this.updateBackdrop(frameMs)
+    this.updatePlayer(frameMs)
+    this.updateSpawns(frameMs)
+    this.updateObstacles(frameMs)
+    this.updatePickups(frameMs)
+    this.checkCollisions()
+
+    if (this.elapsedMs - this.lastStatsAtMs >= 100) this.emitStats()
   }
 
   applySnapshot(snapshot: GameStateViewModel) {
     this.snapshot = snapshot
-    if (this.sys.isActive()) this.renderSnapshot()
+    if (this.sys.isActive()) this.maybeQueuePatch(snapshot)
   }
 
-  private renderSnapshot() {
-    this.tweens.killAll()
-    this.children.removeAll()
-    this.speedLines = []
-    this.clouds = []
-    this.runner = undefined
+  private bindControls() {
+    if (!this.input.keyboard) return
+    this.keys = {
+      jump: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+      up: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
+      w: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+    }
+  }
 
-    this.drawBackdrop()
-    this.snapshot.platforms.forEach((platform) => this.drawPlatform(platform))
-    this.drawRelay(this.snapshot.relay.x, this.snapshot.relay.y)
-    this.snapshot.cores.forEach((core, index) => this.drawCore(core.x, core.y, index))
-    this.snapshot.hazards.forEach((hazard, index) => this.drawHazard(hazard.x, hazard.y, index))
-    this.drawExtraction(
-      this.snapshot.extraction.x,
-      this.snapshot.extraction.y,
-      this.snapshot.extraction.ready,
+  private updatePlayer(deltaMs: number) {
+    if (!this.player) return
+    const grounded = this.player.y >= PLAYER_GROUND_Y - 1
+    const wantsJump = this.keys && (
+      Phaser.Input.Keyboard.JustDown(this.keys.jump) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.up) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.w)
     )
-    this.runner = this.drawRunner(this.snapshot.player)
+
+    if (grounded && wantsJump) this.velocityY = JUMP_VELOCITY
+    this.velocityY += GRAVITY * (deltaMs / 1_000)
+    this.player.y += this.velocityY * (deltaMs / 1_000)
+
+    if (this.player.y >= PLAYER_GROUND_Y) {
+      this.player.y = PLAYER_GROUND_Y
+      this.velocityY = 0
+    }
+
+    const bob = grounded ? Math.sin(this.elapsedMs / 85) * 2 : 0
+    this.player.setRotation(grounded ? 0 : -0.08)
+    ;(this.player.getAt(0) as Phaser.GameObjects.Container).setY(18 + bob)
   }
 
-  private drawBackdrop() {
-    this.add.rectangle(480, 270, 960, 540, COLORS.sky)
-    this.add.rectangle(480, 40, 960, 80, COLORS.skyLight)
+  private updateSpawns(deltaMs: number) {
+    this.obstacleClockMs -= deltaMs
+    this.pickupClockMs -= deltaMs
 
-    const sun = this.add.container(812, 92)
-    sun.add([
-      this.add.rectangle(0, 0, 68, 68, COLORS.gold),
-      this.add.rectangle(0, 0, 48, 48, 0xffee9b),
-      this.add.rectangle(0, 0, 26, 26, COLORS.cream),
-    ])
-    this.tweens.add({ targets: sun, scale: 1.08, duration: 700, yoyo: true, repeat: -1, ease: 'Stepped' })
+    if (this.obstacleClockMs <= 0) {
+      this.spawnObstacle({
+        type: 'spawn_obstacle',
+        obstacle: this.elapsedMs > 14_000 ? 'spike_row' : 'rolling_boulder',
+        lane: 'ground',
+        delayMs: 0,
+        durationMs: 8_000,
+        author: 'gremlin',
+        title: this.elapsedMs > 14_000 ? 'Spike Parade' : 'Warm-Up Trouble',
+        sourceMutationId: `baseline-${Math.floor(this.elapsedMs)}`,
+      })
+      this.obstacleClockMs = Math.max(900, 2_050 - this.elapsedMs / 18)
+    }
 
-    const hill = this.add.graphics()
-    hill.fillStyle(0x78b7d4)
-    ;[
-      [0, 296, 150, 114],
-      [100, 260, 170, 150],
-      [245, 310, 160, 100],
-      [370, 270, 210, 140],
-      [555, 298, 170, 112],
-      [700, 250, 210, 160],
-      [865, 294, 95, 116],
-    ].forEach(([x, y, width, height]) => hill.fillRect(x, y, width, height))
+    if (this.pickupClockMs <= 0) {
+      this.spawnPickup()
+      this.pickupClockMs = 1_050 + Math.random() * 550
+    }
+  }
 
-    const city = this.add.graphics()
-    city.fillStyle(0x4f82a8)
-    ;[
-      [12, 338, 68, 72], [96, 318, 44, 92], [158, 348, 86, 62], [270, 300, 54, 110],
-      [338, 326, 74, 84], [442, 286, 58, 124], [526, 340, 96, 70], [654, 314, 62, 96],
-      [742, 292, 72, 118], [835, 328, 48, 82], [899, 308, 61, 102],
-    ].forEach(([x, y, width, height]) => {
-      city.fillRect(x, y, width, height)
-      city.fillStyle(COLORS.skyLight)
-      for (let wx = x + 10; wx < x + width - 6; wx += 18) {
-        city.fillRect(wx, y + 14, 6, 8)
+  private updateObstacles(deltaMs: number) {
+    const speed = 300 + Math.min(230, this.elapsedMs / 95)
+    for (let index = this.obstacles.length - 1; index >= 0; index -= 1) {
+      const obstacle = this.obstacles[index]
+      obstacle.view.x -= speed * (deltaMs / 1_000)
+      if (obstacle.kind === 'moving_wall') {
+        obstacle.view.y = obstacle.baseY + Math.sin(this.elapsedMs / 180 + obstacle.phase) * 12
       }
-      city.fillStyle(0x4f82a8)
-    })
+      if (obstacle.kind === 'rolling_boulder') {
+        obstacle.view.rotation -= deltaMs / 230
+      }
+      if (obstacle.view.x < -100) {
+        obstacle.view.destroy()
+        this.obstacles.splice(index, 1)
+      }
+    }
+  }
 
-    ;[90, 360, 655].forEach((x, index) => {
-      const cloud = this.add.container(x, 110 + index * 44)
-      cloud.add([
-        this.add.rectangle(0, 8, 94, 20, COLORS.cream),
-        this.add.rectangle(-24, -4, 38, 24, COLORS.cream),
-        this.add.rectangle(16, -10, 44, 32, COLORS.cream),
-        this.add.rectangle(42, 2, 28, 22, COLORS.cream),
-        this.add.rectangle(-8, 18, 76, 6, 0x9bd9e9),
+  private updatePickups(deltaMs: number) {
+    const speed = 300 + Math.min(230, this.elapsedMs / 95)
+    for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
+      const pickup = this.pickups[index]
+      pickup.view.x -= speed * (deltaMs / 1_000)
+      pickup.view.rotation += deltaMs / 800
+      if (pickup.view.x < -60) {
+        pickup.view.destroy()
+        this.pickups.splice(index, 1)
+      }
+    }
+  }
+
+  private checkCollisions() {
+    if (!this.player) return
+    const playerBounds = new Phaser.Geom.Rectangle(
+      this.player.x - 20,
+      this.player.y - 38,
+      40,
+      77,
+    )
+
+    for (const obstacle of this.obstacles) {
+      const bounds = new Phaser.Geom.Rectangle(
+        obstacle.view.x - obstacle.width / 2,
+        obstacle.view.y - obstacle.height / 2,
+        obstacle.width,
+        obstacle.height,
+      )
+      if (Phaser.Geom.Intersects.RectangleToRectangle(playerBounds, bounds)) {
+        this.endRun(obstacle.author, obstacle.title)
+        return
+      }
+    }
+
+    for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
+      const pickup = this.pickups[index]
+      const bounds = new Phaser.Geom.Rectangle(
+        pickup.view.x - pickup.radius,
+        pickup.view.y - pickup.radius,
+        pickup.radius * 2,
+        pickup.radius * 2,
+      )
+      if (!Phaser.Geom.Intersects.RectangleToRectangle(playerBounds, bounds)) continue
+      this.pickupCount += 1
+      pickup.view.destroy()
+      this.pickups.splice(index, 1)
+      this.cameras.main.flash(90, 255, 209, 102, false)
+      this.emitStats()
+    }
+  }
+
+  private maybeQueuePatch(snapshot: GameStateViewModel) {
+    const patch = snapshot.activePatch
+    if (!this.alive || patch.status !== 'active' || this.seenPatchIds.has(patch.id)) return
+    this.seenPatchIds.add(patch.id)
+    const safePatch = obstaclePatchFromView(patch)
+    this.showPatchSignal(safePatch)
+    this.time.delayedCall(safePatch.delayMs, () => {
+      if (this.alive) this.spawnObstacle(safePatch)
+    })
+  }
+
+  private spawnObstacle(patch: ObstaclePatch) {
+    const x = WIDTH + 70
+    const authorColor = patch.author === 'architect'
+      ? COLORS.blue
+      : patch.author === 'auditor'
+        ? COLORS.mint
+        : COLORS.pink
+    let width = 54
+    let height = 54
+    const view = this.add.container(x, GROUND_Y - height / 2)
+
+    if (patch.obstacle === 'rolling_boulder') {
+      width = 56
+      height = 56
+      const rock = this.add.graphics()
+      rock.fillStyle(COLORS.navy)
+      rock.fillCircle(0, 0, 31)
+      rock.fillStyle(authorColor)
+      rock.fillCircle(0, 0, 24)
+      rock.fillStyle(COLORS.cream)
+      rock.fillRect(-4, -20, 8, 40)
+      rock.fillRect(-20, -4, 40, 8)
+      view.add(rock)
+    } else if (patch.obstacle === 'spike_row') {
+      width = 78
+      height = 38
+      view.y = GROUND_Y - height / 2
+      const spikes = this.add.graphics()
+      spikes.fillStyle(COLORS.navy)
+      spikes.fillRect(-42, 12, 84, 10)
+      for (let spikeX = -36; spikeX <= 24; spikeX += 20) {
+        spikes.fillTriangle(spikeX, 12, spikeX + 10, -20, spikeX + 20, 12)
+      }
+      spikes.fillStyle(authorColor)
+      spikes.fillRect(-38, 14, 76, 5)
+      view.add(spikes)
+    } else {
+      width = 46
+      height = 70
+      view.y = GROUND_Y - height / 2
+      view.add([
+        this.add.rectangle(0, 0, width + 8, height + 8, COLORS.navy),
+        this.add.rectangle(0, 0, width, height, authorColor),
+        this.add.rectangle(0, -18, 24, 8, COLORS.cream),
+        this.add.rectangle(0, 8, 24, 8, COLORS.cream),
       ])
-      cloud.setScale(0.7 + index * 0.15)
-      this.clouds.push(cloud)
+    }
+
+    this.obstacles.push({
+      view,
+      width,
+      height,
+      kind: patch.obstacle,
+      author: patch.author,
+      title: patch.title,
+      phase: Math.random() * Math.PI,
+      baseY: view.y,
     })
-
-    for (let index = 0; index < 9; index += 1) {
-      const line = this.add.rectangle(index * 130, 220 + (index % 4) * 37, 42, 4, COLORS.cream, 0.44)
-      line.setOrigin(0, 0.5)
-      this.speedLines.push(line)
-    }
   }
 
-  private drawPlatform(platform: GameStateViewModel['platforms'][number]) {
-    const x = platform.x + platform.width / 2
-    const top = platform.y
-    const baseColor = platform.kind === 'bounce' ? COLORS.pink : platform.kind === 'crumble' ? COLORS.gold : COLORS.grass
-    this.add.rectangle(x, top + 24, platform.width, 48, COLORS.navyDark).setOrigin(0.5, 0)
-    this.add.rectangle(x, top + 6, platform.width, 12, baseColor).setOrigin(0.5, 0)
-    this.add.rectangle(x, top + 16, platform.width, 8, COLORS.cream).setOrigin(0.5, 0)
-
-    for (let px = platform.x + 10; px < platform.x + platform.width - 5; px += 24) {
-      this.add.rectangle(px, top + 34, 10, 10, baseColor, 0.65).setOrigin(0, 0)
-    }
-
-    if (platform.kind === 'bounce') {
-      for (let px = platform.x + 18; px < platform.x + platform.width - 8; px += 42) {
-        const spring = this.add.rectangle(px, top - 2, 22, 8, COLORS.pink).setOrigin(0, 1)
-        this.tweens.add({ targets: spring, scaleY: 1.8, duration: 340, yoyo: true, repeat: -1, ease: 'Stepped', delay: px })
-      }
-    }
-  }
-
-  private drawCore(x: number, y: number, index: number) {
-    const core = this.add.container(x, y)
-    core.add([
-      this.add.rectangle(0, 0, 22, 22, COLORS.navy).setAngle(45),
-      this.add.rectangle(0, 0, 16, 16, COLORS.gold).setAngle(45),
+  private spawnPickup() {
+    const y = Math.random() > 0.5 ? PLAYER_GROUND_Y - 12 : PLAYER_GROUND_Y - 112
+    const view = this.add.container(WIDTH + 35, y)
+    view.add([
+      this.add.rectangle(0, 0, 25, 25, COLORS.navy).setAngle(45),
+      this.add.rectangle(0, 0, 18, 18, COLORS.gold).setAngle(45),
       this.add.rectangle(-3, -3, 6, 6, COLORS.cream),
     ])
     this.tweens.add({
-      targets: core,
-      y: y - 9,
-      duration: 430 + index * 70,
+      targets: view,
+      scale: 1.12,
+      duration: 300,
       yoyo: true,
       repeat: -1,
       ease: 'Stepped',
     })
-    this.add.text(x - 21, y + 23, 'CORE', this.pixelText(7, COLORS.navy))
+    this.pickups.push({ view, radius: 19 })
   }
 
-  private drawHazard(x: number, y: number, index: number) {
-    const hazard = this.add.container(x, y)
-    hazard.add([
-      this.add.rectangle(0, 10, 42, 20, COLORS.purple),
-      this.add.rectangle(-14, 0, 14, 20, COLORS.pink),
-      this.add.rectangle(6, -5, 22, 30, COLORS.pink),
-      this.add.rectangle(-7, -6, 5, 7, COLORS.cream),
-      this.add.rectangle(11, -10, 5, 7, COLORS.cream),
-      this.add.rectangle(-6, -4, 3, 4, COLORS.navy),
-      this.add.rectangle(12, -8, 3, 4, COLORS.navy),
-    ])
-    this.tweens.add({ targets: hazard, scaleX: 1.12, scaleY: 0.88, duration: 300 + index * 80, yoyo: true, repeat: -1, ease: 'Stepped' })
+  private endRun(author: GameMasterPersona, title: string) {
+    if (!this.alive || !this.player) return
+    this.alive = false
+    this.player.setAlpha(0.72)
+    this.player.setRotation(Math.PI / 2)
+    this.cameras.main.shake(180, 0.012)
+    this.cameras.main.flash(140, 239, 71, 111, false)
+    const stats = this.stats(false)
+    this.callbacks.onStats(stats)
+    this.callbacks.onGameOver({ ...stats, killer: { author, title } })
   }
 
-  private drawRelay(x: number, y: number) {
-    const relay = this.add.container(x, y)
-    relay.add([
-      this.add.rectangle(0, 26, 34, 70, COLORS.navy),
-      this.add.rectangle(0, -16, 48, 24, COLORS.blue),
-      this.add.rectangle(0, -16, 34, 10, COLORS.cream),
-      this.add.rectangle(0, 7, 18, 18, COLORS.mint),
-      this.add.rectangle(-10, 48, 14, 8, COLORS.gold),
-      this.add.rectangle(10, 48, 14, 8, COLORS.gold),
-    ])
-    this.add.text(x - 32, y - 54, 'RELAY', this.pixelText(8, COLORS.navy))
-    this.tweens.add({ targets: relay.getAt(3), alpha: 0.3, duration: 240, yoyo: true, repeat: -1, ease: 'Stepped' })
-  }
-
-  private drawExtraction(x: number, y: number, ready: boolean) {
-    const color = ready ? COLORS.mint : 0x7081a8
-    const portal = this.add.container(x, y)
-    portal.add([
-      this.add.rectangle(0, 20, 62, 94, COLORS.navy),
-      this.add.rectangle(0, 12, 44, 74, color),
-      this.add.rectangle(0, 12, 28, 58, ready ? COLORS.cream : 0x9ba6bd),
-      this.add.rectangle(-24, -31, 14, 14, COLORS.gold),
-      this.add.rectangle(24, -31, 14, 14, COLORS.gold),
-    ])
-    this.add.text(x - 42, y - 58, ready ? 'GO! GO! GO!' : 'LOCKED', this.pixelText(7, COLORS.navy))
-    if (ready) {
-      this.tweens.add({ targets: portal, scaleX: 1.08, duration: 260, yoyo: true, repeat: -1, ease: 'Stepped' })
+  private stats(alive = this.alive): EndlessRunStats {
+    const timeScore = Math.floor(this.elapsedMs / 10)
+    const pickupScore = this.pickupCount * 100
+    return {
+      alive,
+      elapsedMs: Math.floor(this.elapsedMs),
+      pickups: this.pickupCount,
+      timeScore,
+      pickupScore,
+      score: timeScore + pickupScore,
     }
   }
 
-  private drawRunner(player: GameStateViewModel['player']) {
-    const { x, y, motion, facing } = player
-    const runner = this.add.container(x, y)
-    runner.setScale(facing === 'left' ? -1 : 1, 1)
+  private emitStats() {
+    this.lastStatsAtMs = this.elapsedMs
+    this.callbacks.onStats(this.stats())
+  }
 
-    const scarf = this.add.container(-27, -18, [
-      this.add.rectangle(0, 0, 34, 8, COLORS.pink),
-      this.add.rectangle(-20, 4, 14, 8, COLORS.pink),
-      this.add.rectangle(-30, 8, 8, 8, 0xe32f8c),
+  private showPatchSignal(patch: ObstaclePatch) {
+    const banner = this.add.container(WIDTH / 2, 150).setDepth(10)
+    banner.add([
+      this.add.rectangle(0, 0, 420, 74, COLORS.navy),
+      this.add.rectangle(0, 0, 408, 62, COLORS.pink),
+      this.add.text(0, -14, `${patch.author.toUpperCase()} DEPLOYED`, this.pixelText(9, COLORS.cream)).setOrigin(0.5),
+      this.add.text(0, 13, patch.title.toUpperCase(), this.pixelText(7, COLORS.navy)).setOrigin(0.5),
     ])
+    this.tweens.add({
+      targets: banner,
+      y: 160,
+      alpha: 0,
+      delay: 1_050,
+      duration: 350,
+      ease: 'Stepped',
+      onComplete: () => banner.destroy(),
+    })
+  }
 
-    const makeLeg = (legX: number, color: number) => {
-      const leg = this.add.container(legX, 16)
-      leg.add([
-        this.add.rectangle(0, 10, 10, 25, color).setOrigin(0.5, 0),
-        this.add.rectangle(5, 34, 19, 8, COLORS.mint),
-        this.add.rectangle(10, 38, 10, 5, COLORS.navy),
-      ])
-      return leg
+  private drawBackdrop() {
+    this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, COLORS.sky)
+    this.add.rectangle(WIDTH / 2, 38, WIDTH, 76, COLORS.skyLight)
+
+    const sun = this.add.rectangle(818, 92, 68, 68, COLORS.gold)
+    this.add.rectangle(818, 92, 44, 44, 0xffee9b)
+    this.tweens.add({ targets: sun, scale: 1.08, duration: 700, yoyo: true, repeat: -1, ease: 'Stepped' })
+
+    const skyline = this.add.graphics()
+    skyline.fillStyle(0x4f82a8)
+    ;[
+      [0, 310, 92, 108], [108, 336, 66, 82], [190, 286, 72, 132],
+      [278, 326, 104, 92], [402, 302, 76, 116], [494, 344, 118, 74],
+      [630, 294, 88, 124], [736, 330, 62, 88], [814, 276, 92, 142], [920, 320, 40, 98],
+    ].forEach(([x, y, width, height]) => skyline.fillRect(x, y, width, height))
+
+    for (let index = 0; index < 10; index += 1) {
+      const line = this.add.rectangle(index * 112, 205 + (index % 5) * 34, 48, 4, COLORS.cream, 0.48)
+      line.setOrigin(0, 0.5)
+      this.speedLines.push(line)
     }
 
-    const makeArm = (armX: number, color: number) => {
-      const arm = this.add.container(armX, -3)
-      arm.add([
-        this.add.rectangle(0, 8, 9, 22, color).setOrigin(0.5, 0),
-        this.add.rectangle(3, 29, 11, 10, COLORS.mint),
-      ])
-      return arm
+    this.add.rectangle(WIDTH / 2, GROUND_Y + 9, WIDTH, 18, COLORS.cream)
+    this.add.rectangle(WIDTH / 2, GROUND_Y + 20, WIDTH, 18, COLORS.grass)
+    this.add.rectangle(WIDTH / 2, GROUND_Y + 72, WIDTH, 86, COLORS.navyDark)
+    for (let x = 0; x < WIDTH; x += 42) {
+      this.add.rectangle(x, GROUND_Y + 48, 20, 12, COLORS.purple, 0.6)
     }
+  }
 
-    const rearLeg = makeLeg(-8, 0x1555a9)
-    const frontLeg = makeLeg(8, COLORS.blue)
-    const rearArm = makeArm(-13, 0x1555a9)
-    const frontArm = makeArm(14, COLORS.blue)
-    const torso = this.add.container(0, 0, [
-      this.add.rectangle(0, 1, 32, 35, COLORS.navy),
-      this.add.rectangle(2, 0, 25, 29, 0x2878d0),
-      this.add.rectangle(0, 14, 24, 6, COLORS.gold),
-      this.add.rectangle(7, 14, 7, 6, 0xe8a62e),
+  private updateBackdrop(deltaMs: number) {
+    const speed = 130 + Math.min(100, this.elapsedMs / 180)
+    for (const line of this.speedLines) {
+      line.x -= speed * (deltaMs / 1_000)
+      if (line.x < -60) line.x = WIDTH + Math.random() * 80
+    }
+  }
+
+  private drawRunner() {
+    const runner = this.add.container(PLAYER_X, PLAYER_GROUND_Y).setDepth(4)
+    const body = this.add.container(0, 18)
+    body.add([
+      this.add.rectangle(-24, -6, 34, 8, COLORS.pink),
+      this.add.rectangle(0, -24, 34, 30, COLORS.blue),
+      this.add.rectangle(3, -40, 28, 25, COLORS.mint),
+      this.add.rectangle(8, -43, 7, 7, COLORS.navy),
+      this.add.rectangle(-10, 4, 11, 28, 0x1555a9),
+      this.add.rectangle(10, 4, 11, 28, 0x1555a9),
+      this.add.rectangle(-14, 20, 22, 8, COLORS.mint),
+      this.add.rectangle(15, 20, 22, 8, COLORS.mint),
     ])
-    const helmet = this.add.container(3, -29, [
-      this.add.rectangle(0, 0, 38, 29, COLORS.navy),
-      this.add.rectangle(-5, -4, 30, 23, COLORS.cream),
-      this.add.rectangle(-12, -14, 18, 8, 0x2878d0),
-      this.add.rectangle(-2, -11, 24, 7, COLORS.blue),
-      this.add.rectangle(10, 1, 20, 12, COLORS.navyDark),
-      this.add.rectangle(14, 1, 11, 5, COLORS.mint),
-      this.add.rectangle(-18, 2, 6, 9, COLORS.gold),
-    ])
-
-    runner.add([scarf, rearLeg, rearArm, torso, frontLeg, frontArm, helmet])
-    this.add.text(x - 22, y - 74, 'YOU', this.pixelText(8, COLORS.navy))
-
-    if (motion === 'run') {
-      rearLeg.setAngle(-34)
-      frontLeg.setAngle(32)
-      rearArm.setAngle(34)
-      frontArm.setAngle(-36)
-      this.tweens.add({ targets: runner, y: y - 4, duration: 110, yoyo: true, repeat: -1, ease: 'Stepped' })
-      this.tweens.add({ targets: scarf, x: -35, y: -22, duration: 165, yoyo: true, repeat: -1, ease: 'Stepped' })
-      this.tweens.add({ targets: frontLeg, angle: -34, duration: 145, yoyo: true, repeat: -1, ease: 'Stepped' })
-      this.tweens.add({ targets: rearLeg, angle: 32, duration: 145, yoyo: true, repeat: -1, ease: 'Stepped' })
-      this.tweens.add({ targets: frontArm, angle: 34, duration: 145, yoyo: true, repeat: -1, ease: 'Stepped' })
-      this.tweens.add({ targets: rearArm, angle: -36, duration: 145, yoyo: true, repeat: -1, ease: 'Stepped' })
-    }
-
-    if (motion === 'idle') {
-      rearLeg.setAngle(-4)
-      frontLeg.setAngle(4)
-      rearArm.setAngle(5)
-      frontArm.setAngle(-5)
-      this.tweens.add({ targets: runner, y: y - 2, duration: 520, yoyo: true, repeat: -1, ease: 'Stepped' })
-      this.tweens.add({ targets: helmet.getAt(5), alpha: 0.3, duration: 950, yoyo: true, repeat: -1, ease: 'Stepped' })
-    }
-
-    if (motion === 'jump') {
-      runner.setAngle(4)
-      rearLeg.setPosition(-6, 11).setAngle(52)
-      frontLeg.setPosition(8, 10).setAngle(-48)
-      rearArm.setAngle(42)
-      frontArm.setAngle(-55)
-      scarf.setPosition(-31, -26).setAngle(-12)
-      this.tweens.add({ targets: runner, y: y - 8, angle: -2, duration: 330, yoyo: true, repeat: -1, ease: 'Stepped' })
-      this.tweens.add({ targets: scarf, angle: 9, duration: 170, yoyo: true, repeat: -1, ease: 'Stepped' })
-    }
-
-    if (motion === 'dash') {
-      runner.setScale(facing === 'left' ? -1.16 : 1.16, 0.92)
-      runner.setAngle(-5)
-      rearLeg.setPosition(-10, 12).setAngle(67)
-      frontLeg.setPosition(8, 13).setAngle(74)
-      rearArm.setAngle(69)
-      frontArm.setAngle(-72)
-      scarf.setPosition(-39, -16).setScale(1.4, 0.8)
-      const trail = this.add.container(x - 58, y - 3, [
-        this.add.rectangle(0, -20, 58, 6, COLORS.pink, 0.8),
-        this.add.rectangle(-16, 0, 72, 5, COLORS.blue, 0.65),
-        this.add.rectangle(5, 19, 44, 5, COLORS.mint, 0.7),
-      ])
-      trail.setDepth(runner.depth - 1)
-      this.tweens.add({ targets: trail, x: x - 82, alpha: 0.18, duration: 180, yoyo: true, repeat: -1, ease: 'Stepped' })
-      this.tweens.add({ targets: runner, x: x + 4, duration: 90, yoyo: true, repeat: -1, ease: 'Stepped' })
-    }
-
-    if (motion === 'hit') {
-      runner.setAngle(-12)
-      rearLeg.setAngle(18)
-      frontLeg.setAngle(-22)
-      rearArm.setAngle(-58)
-      frontArm.setAngle(55)
-      scarf.setAngle(18)
-      runner.add([
-        this.add.rectangle(28, -45, 6, 12, COLORS.gold),
-        this.add.rectangle(39, -34, 10, 6, COLORS.gold),
-        this.add.rectangle(32, -22, 6, 6, COLORS.red),
-      ])
-      this.tweens.add({ targets: runner, x: x - 6, alpha: 0.55, duration: 90, yoyo: true, repeat: -1, ease: 'Stepped' })
-    }
-
+    runner.add(body)
     return runner
-  }
-
-  private bindCommands() {
-    const keyboard = this.input.keyboard
-    if (!keyboard) return
-    const key = (code: number) => keyboard.addKey(code)
-    this.movementKeys = {
-      left: [key(Phaser.Input.Keyboard.KeyCodes.LEFT), key(Phaser.Input.Keyboard.KeyCodes.A)],
-      right: [key(Phaser.Input.Keyboard.KeyCodes.RIGHT), key(Phaser.Input.Keyboard.KeyCodes.D)],
-      up: [key(Phaser.Input.Keyboard.KeyCodes.UP), key(Phaser.Input.Keyboard.KeyCodes.W)],
-      down: [key(Phaser.Input.Keyboard.KeyCodes.DOWN), key(Phaser.Input.Keyboard.KeyCodes.S)],
-      dash: [key(Phaser.Input.Keyboard.KeyCodes.SPACE)],
-    }
-  }
-
-  private emitCommand(command: PlayerCommand) {
-    const now = this.time.now
-    if (now - this.lastCommandAt < 60) return
-    this.lastCommandAt = now
-    this.commandSink(command)
   }
 
   private pixelText(size: number, color: number): Phaser.Types.GameObjects.Text.TextStyle {
@@ -356,32 +433,5 @@ export class RunnerScene extends Phaser.Scene {
       color: `#${color.toString(16).padStart(6, '0')}`,
       resolution: 2,
     }
-  }
-
-  update(_: number, delta: number) {
-    if (this.movementKeys.dash?.some(({ isDown }) => isDown)) {
-      this.emitCommand({
-        type: 'dash',
-        direction: { x: this.snapshot.player.facing === 'left' ? -1 : 1, y: 0 },
-      })
-    } else if (this.movementKeys.left?.some(({ isDown }) => isDown)) {
-      this.emitCommand({ type: 'move', direction: { x: -1, y: 0 } })
-    } else if (this.movementKeys.right?.some(({ isDown }) => isDown)) {
-      this.emitCommand({ type: 'move', direction: { x: 1, y: 0 } })
-    } else if (this.movementKeys.up?.some(({ isDown }) => isDown)) {
-      this.emitCommand({ type: 'move', direction: { x: 0, y: -1 } })
-    } else if (this.movementKeys.down?.some(({ isDown }) => isDown)) {
-      this.emitCommand({ type: 'move', direction: { x: 0, y: 1 } })
-    }
-
-    const shift = (delta / 16.67) * 4
-    this.speedLines.forEach((line) => {
-      line.x -= shift * 2
-      if (line.x < -50) line.x = 990
-    })
-    this.clouds.forEach((cloud, index) => {
-      cloud.x -= shift * (0.08 + index * 0.025)
-      if (cloud.x < -100) cloud.x = 1060
-    })
   }
 }

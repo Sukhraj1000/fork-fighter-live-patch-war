@@ -144,7 +144,7 @@ function resolveDependencies(
     idGenerator: overrides.idGenerator ?? randomUUID,
     cadenceMs:
       overrides.cadenceMs ??
-      positiveInteger(process.env.MATCH_PATCH_CADENCE_MS, 20_000, 'MATCH_PATCH_CADENCE_MS'),
+      positiveInteger(process.env.MATCH_PATCH_CADENCE_MS, 8_000, 'MATCH_PATCH_CADENCE_MS'),
     proposalDeadlineMs:
       overrides.proposalDeadlineMs ??
       positiveInteger(

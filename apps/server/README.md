@@ -29,7 +29,7 @@ Environment variables:
 - `HOST` (default `0.0.0.0`)
 - `MATCH_LOG_DIR` (default `data/matches`)
 - `CLIENT_DIST_PATH` (optional built Vite client directory)
-- `MATCH_PATCH_CADENCE_MS` (default `20000`)
+- `MATCH_PATCH_CADENCE_MS` (default `8000`)
 - `MATCH_PROPOSAL_DEADLINE_MS` (default `5000`)
 - `GAME_MASTER_PROVIDER` (`mock` by default, or `daytona`)
 - `MOCK_AGENT_DELAY_MS` and `MOCK_MUTATION_DURATION_MS` (explicit fixture/E2E

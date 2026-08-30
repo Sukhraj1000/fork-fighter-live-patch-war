@@ -1,36 +1,24 @@
 import { expect, test } from '@playwright/test'
 
-test('plays through drafting, rejection, live mutation, expiry, and extraction', async ({
+test('scores an endless run, dies in one hit, and restarts', async ({
   page,
 }) => {
   await page.goto('/')
   await expect(page.getByTestId('start-run')).toBeVisible()
   await page.getByTestId('start-run').click()
 
-  await expect(page.getByTestId('activity-drafting')).toContainText('AGENTS DRAFTING')
-  await expect(page.getByTestId('run-status')).toContainText('PATCH WINDOW')
-  await expect(page.getByTestId('activity-rejected').first()).toContainText(
-    'PATCH REJECTED',
-  )
-  await expect(page.getByTestId('activity-selected').first()).toContainText(
-    'PATCH SELECTED',
-  )
-  await expect(page.getByTestId('patch-card')).toHaveAttribute('data-status', 'active')
+  await expect(page.getByTestId('activity-drafting')).toContainText('GAME MASTERS DRAFTING')
+  await expect(page.getByTestId('run-status')).toContainText('RUNNING')
+  await expect(page.getByTestId('live-score')).not.toHaveText('0')
 
-  await page.keyboard.down('ArrowRight')
-  await expect(page.getByText('MUTATION TRIGGERED').first()).toBeVisible()
-  await page.keyboard.up('ArrowRight')
+  await expect(page.getByTestId('game-over')).toBeVisible({ timeout: 12_000 })
+  await expect(page.getByTestId('run-status')).toHaveText('GAME OVER')
+  await expect(page.getByTestId('game-over')).toContainText('FINAL SCORE')
+  await expect(page.getByTestId('game-over')).toContainText('KILLED BY: GREMLIN')
 
-  await expect(page.getByTestId('activity-expired').first()).toContainText(
-    'PATCH EXPIRED',
-  )
-
-  await page.keyboard.down('ArrowRight')
-  await expect(page.getByTestId('run-status')).toHaveText('EXTRACTED', {
-    timeout: 12_000,
-  })
-  await page.keyboard.up('ArrowRight')
-  await expect(page.getByText('RUN EXTRACTED')).toBeVisible()
+  await page.getByTestId('restart-run').click()
+  await expect(page.getByTestId('run-status')).toContainText('RUNNING')
+  await expect(page.getByTestId('game-over')).not.toBeVisible()
 })
 
 test('proposal work leaves the live game responsive', async ({ request }) => {

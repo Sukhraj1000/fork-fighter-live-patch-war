@@ -1,13 +1,14 @@
 # Fork Fighter live web client
 
-The React UI starts a real server-authoritative match. Phaser renders current
-game-core snapshots and emits typed movement/dash commands; it does not decide
-collisions, scoring, extraction, mutation selection, or cleanup.
+The React UI starts a real server-hosted Game Master match. Phaser owns the
+small, stable endless-run shell: auto-run, jump, shard collection, scoring,
+one-hit death, and restart. It accepts only obstacle patches translated through
+the typed client contract; it never executes agent-authored code.
 
-The client polls compact playable snapshots for smooth presentation and uses
-the match SSE stream for agent drafting, rejection, selection, activation,
-effect, expiry, failure, and reconnect status. The activity rail makes the
-validated patch lifecycle visible without pausing player input.
+The client polls compact match snapshots and uses the SSE stream for agent
+drafting, rejection, selection, activation, expiry, failure, and reconnect
+status. The activity rail makes the validated patch lifecycle visible without
+pausing play.
 
 For hot client development, start the server and Vite proxy separately:
 

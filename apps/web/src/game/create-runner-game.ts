@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
-import type { GameStateViewModel, PlayerCommand } from '../model/view-models'
+import type { EndlessRunCallbacks } from '../model/endless-run'
+import type { GameStateViewModel } from '../model/view-models'
 import { RunnerScene } from './RunnerScene'
 
 export type RunnerGameHandle = {
@@ -10,9 +11,9 @@ export type RunnerGameHandle = {
 export function createRunnerGame(
   parent: HTMLElement,
   snapshot: GameStateViewModel,
-  onCommand: (command: PlayerCommand) => void,
+  callbacks: EndlessRunCallbacks,
 ): RunnerGameHandle {
-  const scene = new RunnerScene(snapshot, onCommand)
+  const scene = new RunnerScene(snapshot, callbacks)
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent,

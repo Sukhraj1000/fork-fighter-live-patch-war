@@ -34,6 +34,13 @@ export async function getLiveMatch(matchId: string): Promise<LiveMatchPayload> {
   return response.live
 }
 
+export async function endLiveMatch(matchId: string): Promise<void> {
+  await jsonRequest(`/api/live-matches/${encodeURIComponent(matchId)}/end`, {
+    method: 'POST',
+    body: '{}',
+  })
+}
+
 export async function sendPlayerCommand(
   matchId: string,
   command: PlayerCommand,

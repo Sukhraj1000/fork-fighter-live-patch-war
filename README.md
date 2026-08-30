@@ -1,9 +1,8 @@
 # Fork Fighter: Live Patch War
 
-Fork Fighter is a deterministic 2D action game that keeps playing while three
-game masters draft typed live mutations. The server accepts only structured
-proposals, validates them against the current game state, selects a safe
-candidate, and applies it through the mutation runtime at a patch boundary.
+Fork Fighter is an endless 2D score-chaser that keeps playing while three game
+masters draft typed obstacle patches. Survive, collect Fork Shards, and jump
+the traps the Game Masters deploy in real time. One hit ends the run.
 
 The default path is completely local: it uses deterministic mock game masters
 and does not require Daytona, provider credentials, or network success.
@@ -17,9 +16,9 @@ pnpm install
 pnpm play
 ```
 
-Open <http://127.0.0.1:3001>. Use A/D or the arrow keys to move, W/S for the
-vertical axis, and Space to dash. Collect three Fork Cores, bank them at the
-relay, then reach extraction.
+Open <http://127.0.0.1:3001>. The runner moves automatically; use Space, W, or
+the Up arrow to jump. Score increases for every moment alive and every Fork
+Shard collected.
 
 `pnpm play` builds the Phaser/React client and serves it from Fastify. The
 server-authoritative ticker advances game-core continuously, batches compact
@@ -40,10 +39,9 @@ Then run unit, integration, build, and browser smoke coverage with one command:
 pnpm verify
 ```
 
-The browser smoke covers start → play → concurrent drafting → visible
-rejection → selection → activation → triggered mutation → expiry/cleanup →
-extraction. A server integration test also proves that game ticks continue
-while a provider request times out.
+The browser smoke covers start → live scoring → one-hit death → final score →
+restart. A server integration test also proves that the live match continues
+while provider work runs in parallel.
 
 ## Provider boundary
 
@@ -79,10 +77,13 @@ or timeout result; it never blocks the ticker or bypasses validation. See
 
 ## Safety boundary
 
-- Phaser emits player commands but owns no game rules.
-- game-core is the deterministic authority for movement, collisions, scoring,
-  banking, death, and extraction.
+- The stable Phaser shell owns only the fixed endless-run rules: jump,
+  collision, pickups, scoring, death, and restart.
+- The server owns Game Master orchestration, validation, retained context, and
+  the streamed patch lifecycle.
 - Game masters can return only one typed `MutationProposal`.
+- The client translates an accepted mutation through an obstacle-only
+  `ObstaclePatch` contract; agents never write or execute game code.
 - Every live proposal passes schema, capability, cleanup, invariant,
   difficulty, novelty, simulation, and playable-runtime checks.
 - Mutation runtime applies and cleans up only capabilities it explicitly

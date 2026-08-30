@@ -1,24 +1,28 @@
 import { useEffect, useRef } from 'react'
-import type { GameStateViewModel, PlayerCommand } from '../model/view-models'
+import type { EndlessRunCallbacks } from '../model/endless-run'
+import type { GameStateViewModel } from '../model/view-models'
 import type { RunnerGameHandle } from '../game/create-runner-game'
 
 type ArenaCanvasProps = {
   snapshot: GameStateViewModel
-  onCommand: (command: PlayerCommand) => void
+  callbacks: EndlessRunCallbacks
 }
 
-export function ArenaCanvas({ snapshot, onCommand }: ArenaCanvasProps) {
+export function ArenaCanvas({ snapshot, callbacks }: ArenaCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<RunnerGameHandle | null>(null)
-  const commandRef = useRef(onCommand)
-  commandRef.current = onCommand
+  const callbacksRef = useRef(callbacks)
+  callbacksRef.current = callbacks
 
   useEffect(() => {
     let cancelled = false
 
     void import('../game/create-runner-game').then(({ createRunnerGame }) => {
       if (cancelled || !hostRef.current) return
-      handleRef.current = createRunnerGame(hostRef.current, snapshot, (command) => commandRef.current(command))
+      handleRef.current = createRunnerGame(hostRef.current, snapshot, {
+        onStats: (stats) => callbacksRef.current.onStats(stats),
+        onGameOver: (result) => callbacksRef.current.onGameOver(result),
+      })
     })
 
     return () => {
@@ -37,7 +41,7 @@ export function ArenaCanvas({ snapshot, onCommand }: ArenaCanvasProps) {
       className="arena-canvas"
       ref={hostRef}
       role="img"
-      aria-label={`${snapshot.sector} side-scrolling runner arena. Player is in ${snapshot.player.motion} motion with ${snapshot.coresHeld} cores and ${snapshot.health} health.`}
+      aria-label={`${snapshot.sector} endless runner arena. Jump over Game Master obstacles and collect fork shards.`}
     >
       <div className="loading-sprite" aria-hidden="true">LOADING RUN...</div>
     </div>
