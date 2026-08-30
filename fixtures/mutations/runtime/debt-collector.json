@@ -1,0 +1,36 @@
+{
+  "id": "debt-collector",
+  "title": "Debt Collector",
+  "patchNote": "Collecting a core dispatches a slow collector to reclaim it.",
+  "author": "gremlin",
+  "durationMs": 20000,
+  "difficultyCost": 1.5,
+  "triggers": [
+    {
+      "id": "collect-core",
+      "type": "onCoreCollected",
+      "coreRisk": "any",
+      "effects": [
+        {
+          "type": "spawnCollector",
+          "count": 1,
+          "spawnAt": "collectedCore",
+          "speedMultiplier": 0.55,
+          "contactDamage": 10,
+          "tag": "debt-collector:collectors"
+        }
+      ]
+    }
+  ],
+  "limits": {
+    "maxTriggerActivations": 4,
+    "maxSpawnedEntities": 4
+  },
+  "cleanup": [
+    {
+      "type": "removeEntitiesByTag",
+      "tag": "debt-collector:collectors",
+      "when": "expiry"
+    }
+  ]
+}
