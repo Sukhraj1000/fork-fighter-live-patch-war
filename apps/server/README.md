@@ -1,16 +1,27 @@
 # Fork Fighter match server
 
-The server is the match-scoped authority for telemetry, event-batch ordering,
-patch cadence, agent status, browser events, and the append-only activity log.
-It runs with deterministic mock game masters by default. Director, game-master,
-validator, selector, clock, and log implementations are dependency-injected so
-the corresponding packages can replace the defaults as they land.
+Fastify owns the live match, fixed-rate game-core ticker, compact event batches,
+director telemetry, proposal deadlines, validation/selection, mutation-runtime
+lifecycle, SSE status stream, and redacted append-only log.
 
-## Run
+The default dependency graph adapts the shared deterministic mock
+`AgentBrain`s. It requires no Daytona credentials. Set
+`GAME_MASTER_PROVIDER=daytona` plus the documented worker snapshot/command to
+switch only the provider adapter.
 
-```bash
-pnpm --filter @fork-fighter/server dev
-```
+## HTTP surface
+
+- `POST /api/live-matches` starts a complete playable match.
+- `GET /api/live-matches/:matchId` returns game, runtime, and patch state.
+- `POST /api/live-matches/:matchId/commands` queues one typed game-core command.
+- `POST /api/live-matches/:matchId/end` ends the playable match.
+- `GET /api/matches/:matchId/events` streams agent and patch events with SSE
+  replay via `Last-Event-ID`.
+- The lower-level `/api/matches` telemetry/event-batch surface remains available
+  to independent clients and tests.
+
+The built Vite client is served when `CLIENT_DIST_PATH` is set. From the root,
+`pnpm play` builds and starts that combined app.
 
 Environment variables:
 
@@ -18,20 +29,10 @@ Environment variables:
 - `HOST` (default `0.0.0.0`)
 - `MATCH_LOG_DIR` (default `data/matches`)
 - `CLIENT_DIST_PATH` (optional built Vite client directory)
+- `MATCH_PATCH_CADENCE_MS` (default `20000`)
+- `MATCH_PROPOSAL_DEADLINE_MS` (default `5000`)
+- `GAME_MASTER_PROVIDER` (`mock` by default, or `daytona`)
+- `MOCK_AGENT_DELAY_MS` and `MOCK_MUTATION_DURATION_MS` (explicit fixture/E2E
+  timing controls)
 
-## HTTP surface
-
-- `POST /api/matches` creates a match and starts proposal work for the first
-  20-second patch boundary.
-- `GET /api/matches/:matchId` returns the current public snapshot.
-- `POST /api/matches/:matchId/telemetry` ingests compact `RunTelemetry`.
-- `POST /api/matches/:matchId/event-batches` ingests ordered,
-  retry-idempotent `GameEventBatch` payloads.
-- `GET /api/matches/:matchId/events` streams native SSE. Reconnect with
-  `Last-Event-ID` to replay missed events without mutating match state.
-- `GET /api/matches/:matchId/log` reads the replayable, redacted activity log.
-- `POST /api/matches/:matchId/end` ends the match and cancels active patches.
-
-JSONL entries cover each proposal, rejection, selection, activation, expiry,
-and patch outcome. Credential-shaped keys and values are redacted before an
-entry reaches either disk or a browser connection.
+Run server tests with `pnpm --filter @fork-fighter/server test`.

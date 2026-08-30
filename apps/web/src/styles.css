@@ -23,6 +23,18 @@ body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--blue); 
 button, kbd { font: inherit; }
 button { color: inherit; }
 
+.launch-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; position: relative; }
+.launch-card { z-index: 1; width: min(680px, 100%); padding: clamp(28px, 6vw, 62px); text-align: center; background: var(--cream); }
+.launch-card small { color: var(--purple); font-size: 7px; line-height: 1.8; }
+.launch-card h1 { margin: 24px 0 18px; color: var(--navy); font-size: clamp(27px, 7vw, 56px); line-height: 1.25; text-shadow: 5px 5px 0 var(--blue); }
+.launch-card h1 span { color: #1379c6; }
+.launch-card p { max-width: 540px; margin: 0 auto 30px; color: var(--purple); font-size: 9px; line-height: 2; }
+.launch-card button { min-height: 56px; border: 4px solid var(--navy); padding: 0 24px; background: var(--gold); color: var(--navy); box-shadow: 6px 6px 0 var(--navy-dark); cursor: pointer; font-size: 10px; }
+.launch-card button:hover, .launch-card button:focus-visible { background: var(--mint); outline: 4px solid var(--pink); outline-offset: 4px; }
+.launch-card button:disabled { cursor: wait; filter: grayscale(.5); }
+.launch-card .launch-error { margin-top: 24px; color: var(--red); }
+.launch-card footer { margin-top: 34px; color: #6a7292; font-size: 6px; line-height: 1.8; }
+
 .app-shell {
   width: min(1680px, calc(100% - 28px));
   min-height: 100vh;
@@ -101,13 +113,16 @@ button { color: inherit; }
 }
 .fixture-tabs button:hover, .fixture-tabs button:focus-visible { color: var(--cream); background: var(--purple); outline: 3px solid var(--gold); outline-offset: 2px; }
 .fixture-tabs button.active { color: var(--navy); background: var(--gold); transform: translateY(-2px); box-shadow: inset 0 -4px #eaa63e, 0 2px 0 var(--cream); }
+.pipeline-state { display: flex; align-items: center; gap: 7px; padding: 8px 10px; background: var(--navy); color: var(--mint); font-size: 5px; white-space: nowrap; }
+.pipeline-state i { color: var(--gold); font-style: normal; }
 
 .run-clock { justify-self: end; display: grid; grid-template-columns: 12px auto; gap: 6px 10px; align-items: center; }
 .run-clock small { font-size: 7px; color: var(--purple); }
 .run-clock strong { grid-column: 1 / -1; justify-self: end; color: #1379c6; font-size: clamp(16px, 1.6vw, 24px); text-shadow: 3px 3px 0 #b7dcff; }
 .live-dot { width: 8px; height: 8px; background: var(--red); box-shadow: 0 0 0 3px #ffc2cf; animation: pixelBlink 600ms steps(2, end) infinite; }
+.live-dot.connected { background: var(--mint); box-shadow: 0 0 0 3px rgba(94,231,183,.24); }
 
-.broadcast-grid { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) 252px; gap: 14px; margin-top: 14px; align-items: start; }
+.broadcast-grid { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) 338px; gap: 14px; margin-top: 14px; align-items: start; }
 .game-frame { min-width: 0; padding: 9px; background: #cceeff; }
 .frame-titlebar { min-height: 36px; padding: 0 9px; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--navy); color: var(--cream); font-size: 8px; line-height: 1.4; }
 .frame-titlebar span:last-child { color: var(--gold); }
@@ -185,18 +200,34 @@ button { color: inherit; }
 .executor-card h3 { margin: 7px 0 0; color: var(--cream); font-size: 9px; line-height: 1.55; overflow-wrap: anywhere; }
 .executor-countdown { margin-top: 13px; display: flex; align-items: baseline; justify-content: space-between; color: #7d89b4; font-size: 5px; }
 .executor-countdown b { color: var(--gold); font-size: 12px; }
+.patch-note { margin: 10px 0 0; color: #9faad2; font-size: 6px; line-height: 1.7; }
 .animation-slot { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; opacity: .34; }
 .animation-slot i { width: 5px; height: 5px; background: #7480a7; }
+
+.director-stack { display: grid; gap: 5px; margin-top: 8px; }
+.director-row { min-height: 34px; display: grid; grid-template-columns: 7px 1fr auto; align-items: center; gap: 7px; padding: 6px 7px; border: 2px solid #44517e; background: #111a3c; }
+.director-row > span:first-child { width: 7px; height: 18px; }
+.director-row b { color: var(--cream); font-size: 6px; }
+.activity-feed { max-height: 258px; overflow: auto; list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 5px; scrollbar-color: var(--purple) var(--navy-dark); }
+.activity-feed li { padding: 9px; border-left: 4px solid #44517e; background: #111a3c; display: grid; gap: 5px; }
+.activity-feed li[data-status='rejected'], .activity-feed li[data-status='failed'] { border-left-color: var(--red); }
+.activity-feed li[data-status='selected'] { border-left-color: var(--pink); }
+.activity-feed li[data-status='active'], .activity-feed li[data-status='validated'] { border-left-color: var(--mint); }
+.activity-feed small { color: #7d89b4; font-size: 5px; }
+.activity-feed strong { color: var(--cream); font-size: 7px; line-height: 1.4; }
+.activity-feed span { color: #9faad2; font-size: 5px; line-height: 1.5; }
 
 .status-badge { display: inline-flex; align-items: center; gap: 4px; width: max-content; padding: 4px 5px; border: 2px solid var(--navy); background: var(--paper); color: var(--navy); font-size: 5px; white-space: nowrap; box-shadow: 2px 2px 0 rgba(10,18,48,.3); }
 .status-badge i { width: 5px; height: 5px; background: currentColor; }
 .status-drafting { color: var(--blue); }
+.status-idle, .status-proposed { color: #8b96ba; }
 .status-rejected { color: var(--red); background: #ffe5eb; }
 .status-validated { color: #16815f; background: #d9fff1; }
 .status-selected { color: #a53884; background: #ffe0f3; }
 .status-incoming { color: #9a4b00; background: #fff0bd; }
 .status-active { color: #0b7756; background: #cffff0; }
 .status-expired { color: #6a7292; background: #e9eaf0; }
+.status-failed { color: var(--red); background: #ffe5eb; }
 
 .page-footer { position: relative; z-index: 1; min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 6px 0; color: #cbd6ff; font-size: 6px; }
 .shell-safe { color: var(--mint); }
@@ -222,6 +253,7 @@ button { color: inherit; }
   .brand small { font-size: 5px; }
   .run-clock small { display: none; }
   .fixture-tabs { width: 100%; }
+  .pipeline-state { grid-row: 2; grid-column: 1 / -1; justify-self: stretch; justify-content: center; overflow: hidden; }
   .fixture-tabs button { flex: 1; padding: 0 5px; font-size: 6px; }
   .broadcast-grid { gap: 10px; margin-top: 10px; }
   .game-screen { min-height: 300px; }

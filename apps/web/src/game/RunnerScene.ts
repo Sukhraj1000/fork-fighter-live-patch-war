@@ -25,6 +25,9 @@ export class RunnerScene extends Phaser.Scene {
   private clouds: Phaser.GameObjects.Container[] = []
   private runner?: Phaser.GameObjects.Container
   private lastCommandAt = 0
+  private movementKeys: Partial<
+    Record<'left' | 'right' | 'up' | 'down' | 'dash', Phaser.Input.Keyboard.Key[]>
+  > = {}
 
   constructor(snapshot: GameStateViewModel, commandSink: CommandSink) {
     super({ key: 'runner-presentation' })
@@ -327,13 +330,16 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private bindCommands() {
-    this.input.keyboard?.on('keydown-LEFT', () => this.emitCommand({ type: 'move', direction: 'left' }))
-    this.input.keyboard?.on('keydown-A', () => this.emitCommand({ type: 'move', direction: 'left' }))
-    this.input.keyboard?.on('keydown-RIGHT', () => this.emitCommand({ type: 'move', direction: 'right' }))
-    this.input.keyboard?.on('keydown-D', () => this.emitCommand({ type: 'move', direction: 'right' }))
-    this.input.keyboard?.on('keydown-UP', () => this.emitCommand({ type: 'jump' }))
-    this.input.keyboard?.on('keydown-W', () => this.emitCommand({ type: 'jump' }))
-    this.input.keyboard?.on('keydown-SPACE', () => this.emitCommand({ type: 'dash' }))
+    const keyboard = this.input.keyboard
+    if (!keyboard) return
+    const key = (code: number) => keyboard.addKey(code)
+    this.movementKeys = {
+      left: [key(Phaser.Input.Keyboard.KeyCodes.LEFT), key(Phaser.Input.Keyboard.KeyCodes.A)],
+      right: [key(Phaser.Input.Keyboard.KeyCodes.RIGHT), key(Phaser.Input.Keyboard.KeyCodes.D)],
+      up: [key(Phaser.Input.Keyboard.KeyCodes.UP), key(Phaser.Input.Keyboard.KeyCodes.W)],
+      down: [key(Phaser.Input.Keyboard.KeyCodes.DOWN), key(Phaser.Input.Keyboard.KeyCodes.S)],
+      dash: [key(Phaser.Input.Keyboard.KeyCodes.SPACE)],
+    }
   }
 
   private emitCommand(command: PlayerCommand) {
@@ -353,6 +359,21 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   update(_: number, delta: number) {
+    if (this.movementKeys.dash?.some(({ isDown }) => isDown)) {
+      this.emitCommand({
+        type: 'dash',
+        direction: { x: this.snapshot.player.facing === 'left' ? -1 : 1, y: 0 },
+      })
+    } else if (this.movementKeys.left?.some(({ isDown }) => isDown)) {
+      this.emitCommand({ type: 'move', direction: { x: -1, y: 0 } })
+    } else if (this.movementKeys.right?.some(({ isDown }) => isDown)) {
+      this.emitCommand({ type: 'move', direction: { x: 1, y: 0 } })
+    } else if (this.movementKeys.up?.some(({ isDown }) => isDown)) {
+      this.emitCommand({ type: 'move', direction: { x: 0, y: -1 } })
+    } else if (this.movementKeys.down?.some(({ isDown }) => isDown)) {
+      this.emitCommand({ type: 'move', direction: { x: 0, y: 1 } })
+    }
+
     const shift = (delta / 16.67) * 4
     this.speedLines.forEach((line) => {
       line.x -= shift * 2

@@ -1,18 +1,20 @@
+import type { PlayerCommand as CorePlayerCommand } from '@fork-fighter/contracts'
+
 export type PatchStatus =
+  | 'idle'
   | 'drafting'
+  | 'proposed'
   | 'rejected'
   | 'validated'
   | 'selected'
   | 'incoming'
   | 'active'
   | 'expired'
+  | 'failed'
 
 export type FixtureMode = 'run' | 'patch' | 'extract'
 
-export type PlayerCommand =
-  | { type: 'move'; direction: 'left' | 'right' }
-  | { type: 'jump' }
-  | { type: 'dash' }
+export type PlayerCommand = CorePlayerCommand
 
 export type RunnerEntity = {
   id: string

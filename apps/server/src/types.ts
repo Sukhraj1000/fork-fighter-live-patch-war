@@ -36,6 +36,7 @@ export interface GameMasterAgent {
     request: GameMasterRequest,
     signal: AbortSignal,
   ): Promise<ProposalResult>
+  close?(): Promise<void>
 }
 
 export interface ProposalValidator {

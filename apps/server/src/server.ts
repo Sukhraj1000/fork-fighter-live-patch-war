@@ -7,12 +7,21 @@ import Fastify, {
 } from 'fastify'
 
 import { JsonlMatchLogStore } from './jsonl-log.js'
+import { createPersistentDaytonaBrains } from './daytona-agent-brain.js'
+import {
+  adaptAgentBrains,
+  createIntegratedSelector,
+  createIntegratedValidator,
+  createMockGameMasterBrains,
+} from './integration-dependencies.js'
+import {
+  LiveGameStateStore,
+  LiveMatchCoordinator,
+  type LiveMatchCoordinatorOptions,
+} from './live-match.js'
 import { MatchHost, MatchHostError } from './match-host.js'
 import {
-  createDeterministicMockAgents,
   defaultCapabilities,
-  deterministicMockSelector,
-  deterministicMockValidator,
 } from './mock-dependencies.js'
 import { redactForExternal } from './redaction.js'
 import { registerBuiltClient } from './static-client.js'
@@ -35,11 +44,14 @@ export interface MatchServerOptions {
   dependencies?: Partial<MatchHostDependencies>
   logDirectory?: string
   clientDistPath?: string
+  provider?: 'mock' | 'daytona'
+  live?: LiveMatchCoordinatorOptions
 }
 
 export interface MatchServer {
   app: FastifyInstance
   host: MatchHost
+  live: LiveMatchCoordinator
 }
 
 function knownSecretValues(): string[] {
@@ -50,12 +62,78 @@ function knownSecretValues(): string[] {
   ].filter((value): value is string => typeof value === 'string' && value.length > 0)
 }
 
-function resolveDependencies(options: MatchServerOptions): MatchHostDependencies {
+function positiveInteger(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+): number {
+  if (value === undefined) return fallback
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer.`)
+  }
+  return parsed
+}
+
+function defaultAgents(options: MatchServerOptions): MatchHostDependencies['agents'] {
+  const provider = options.provider ?? process.env.GAME_MASTER_PROVIDER ?? 'mock'
+  if (provider === 'daytona') {
+    const snapshotName = process.env.DAYTONA_WORKER_SNAPSHOT
+    const codexSecretName = process.env.DAYTONA_CODEX_SECRET_NAME
+    if (!snapshotName || !codexSecretName) {
+      throw new Error(
+        'Daytona mode requires DAYTONA_WORKER_SNAPSHOT and DAYTONA_CODEX_SECRET_NAME.',
+      )
+    }
+    return adaptAgentBrains(
+      createPersistentDaytonaBrains({
+        snapshotName,
+        codexSecretName,
+        ttlMinutes: positiveInteger(
+          process.env.DAYTONA_WORKER_TTL_MINUTES,
+          30,
+          'DAYTONA_WORKER_TTL_MINUTES',
+        ),
+        startupTimeoutMs: positiveInteger(
+          process.env.DAYTONA_WORKER_STARTUP_TIMEOUT_MS,
+          20_000,
+          'DAYTONA_WORKER_STARTUP_TIMEOUT_MS',
+        ),
+      }),
+    )
+  }
+  if (provider !== 'mock') {
+    throw new Error('GAME_MASTER_PROVIDER must be mock or daytona.')
+  }
+
+  const delayMs = positiveInteger(
+    process.env.MOCK_AGENT_DELAY_MS,
+    1,
+    'MOCK_AGENT_DELAY_MS',
+  )
+  const configuredDuration = process.env.MOCK_MUTATION_DURATION_MS
+  const durationMs =
+    configuredDuration === undefined
+      ? undefined
+      : positiveInteger(
+          configuredDuration,
+          16_000,
+          'MOCK_MUTATION_DURATION_MS',
+        )
+  return adaptAgentBrains(createMockGameMasterBrains(delayMs, durationMs))
+}
+
+function resolveDependencies(
+  options: MatchServerOptions,
+  gameStates: LiveGameStateStore,
+): MatchHostDependencies {
   const overrides = options.dependencies ?? {}
   return {
-    agents: overrides.agents ?? createDeterministicMockAgents(),
-    validator: overrides.validator ?? deterministicMockValidator,
-    selector: overrides.selector ?? deterministicMockSelector,
+    agents: overrides.agents ?? defaultAgents(options),
+    validator:
+      overrides.validator ?? createIntegratedValidator((matchId) => gameStates.get(matchId)),
+    selector:
+      overrides.selector ?? createIntegratedSelector((matchId) => gameStates.get(matchId)),
     capabilities: overrides.capabilities ?? defaultCapabilities,
     logStore:
       overrides.logStore ??
@@ -64,8 +142,16 @@ function resolveDependencies(options: MatchServerOptions): MatchHostDependencies
       ),
     clock: overrides.clock ?? systemClock,
     idGenerator: overrides.idGenerator ?? randomUUID,
-    cadenceMs: overrides.cadenceMs ?? 20_000,
-    proposalDeadlineMs: overrides.proposalDeadlineMs ?? 5_000,
+    cadenceMs:
+      overrides.cadenceMs ??
+      positiveInteger(process.env.MATCH_PATCH_CADENCE_MS, 20_000, 'MATCH_PATCH_CADENCE_MS'),
+    proposalDeadlineMs:
+      overrides.proposalDeadlineMs ??
+      positiveInteger(
+        process.env.MATCH_PROPOSAL_DEADLINE_MS,
+        5_000,
+        'MATCH_PROPOSAL_DEADLINE_MS',
+      ),
     sseHistorySize: overrides.sseHistorySize ?? 256,
     secretValues: overrides.secretValues ?? knownSecretValues(),
   }
@@ -83,8 +169,10 @@ export function createMatchServer(options: MatchServerOptions = {}): MatchServer
     logger: false,
     ...options.fastify,
   })
-  const dependencies = resolveDependencies(options)
+  const gameStates = new LiveGameStateStore()
+  const dependencies = resolveDependencies(options, gameStates)
   const host = new MatchHost(dependencies)
+  const live = new LiveMatchCoordinator(host, gameStates, options.live)
 
   app.get('/health', async () => ({ status: 'ok' }))
 
@@ -94,6 +182,39 @@ export function createMatchServer(options: MatchServerOptions = {}): MatchServer
     const snapshot = await host.createMatch(body)
     return reply.code(201).send({ match: snapshot })
   })
+
+  app.post('/api/live-matches', async (request, reply) => {
+    const body =
+      request.body && typeof request.body === 'object'
+        ? (request.body as { matchId?: unknown; seed?: unknown })
+        : {}
+    const matchId =
+      typeof body.matchId === 'string' ? body.matchId : `live-${randomUUID()}`
+    const seed =
+      typeof body.seed === 'string' || typeof body.seed === 'number'
+        ? body.seed
+        : matchId
+    const snapshot = await live.create({ matchId, seed })
+    return reply.code(201).send({ live: snapshot })
+  })
+
+  app.get<{ Params: { matchId: string } }>(
+    '/api/live-matches/:matchId',
+    async (request) => ({ live: live.getSnapshot(request.params.matchId) }),
+  )
+
+  app.post<{ Params: { matchId: string } }>(
+    '/api/live-matches/:matchId/commands',
+    async (request, reply) =>
+      reply
+        .code(202)
+        .send({ live: live.queueCommand(request.params.matchId, request.body) }),
+  )
+
+  app.post<{ Params: { matchId: string } }>(
+    '/api/live-matches/:matchId/end',
+    async (request) => ({ live: await live.end(request.params.matchId) }),
+  )
 
   app.get<{ Params: { matchId: string } }>(
     '/api/matches/:matchId',
@@ -193,10 +314,11 @@ export function createMatchServer(options: MatchServerOptions = {}): MatchServer
   })
 
   app.addHook('onClose', async () => {
+    await live.close()
     await host.close()
   })
 
-  return { app, host }
+  return { app, host, live }
 }
 
 export const buildMatchServer = createMatchServer
