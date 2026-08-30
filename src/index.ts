@@ -1,38 +1,31 @@
 import 'dotenv/config'
-import { Daytona } from '@daytona/sdk'
-import type { Sandbox } from '@daytona/sdk'
+import {
+  createDaytonaSdkWorkerProvider,
+  runDaytonaWorkerSmokeTest,
+} from '@fork-fighter/gm-orchestrator'
+
+function requiredEnvironment(name: string): string {
+  const value = process.env[name]?.trim()
+  if (!value) {
+    throw new Error(`${name} is required for the Daytona worker smoke test.`)
+  }
+  return value
+}
 
 async function main(): Promise<void> {
-  if (!process.env.DAYTONA_API_KEY) {
-    throw new Error(
-      'DAYTONA_API_KEY is missing. Copy .env.example to .env and add your Daytona API key.',
-    )
-  }
-
-  const daytona = new Daytona()
-  let sandbox: Sandbox | undefined
-
-  try {
-    console.log('Creating Daytona sandbox...')
-    sandbox = await daytona.create()
-    console.log(`Sandbox ready: ${sandbox.id}`)
-
-    const response = await sandbox.process.codeRun(
-      'print("Hello from an isolated Daytona sandbox!")',
-    )
-
-    console.log(response.result)
-  } finally {
-    if (sandbox) {
-      console.log('Deleting sandbox...')
-      await sandbox.delete(60, true)
-      console.log('Sandbox deleted.')
-    }
-  }
+  requiredEnvironment('DAYTONA_API_KEY')
+  const snapshotName = requiredEnvironment('DAYTONA_WORKER_SNAPSHOT')
+  const codexSecretName = requiredEnvironment('DAYTONA_CODEX_SECRET_NAME')
+  const result = await runDaytonaWorkerSmokeTest({
+    provider: createDaytonaSdkWorkerProvider(),
+    snapshotName,
+    codexSecretName,
+  })
+  console.log(`Prepared Daytona worker passed: ${result.sandboxId}`)
 }
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
-  console.error(`Daytona quickstart failed: ${message}`)
+  console.error(`Daytona worker smoke test failed: ${message}`)
   process.exitCode = 1
 })
