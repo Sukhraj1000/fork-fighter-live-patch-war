@@ -5,6 +5,24 @@ umask 077
 cd /opt/fork-fighter-worker
 rm -f runtime/proposal.json
 
+if [ -s "${CODEX_HOME}/auth.json" ]; then
+  set -- \
+    -c model_provider='"openai_chatgpt_https"' \
+    -c model_providers.openai_chatgpt_https.name='"OpenAI ChatGPT HTTPS only"' \
+    -c model_providers.openai_chatgpt_https.base_url='"https://chatgpt.com/backend-api/codex"' \
+    -c model_providers.openai_chatgpt_https.wire_api='"responses"' \
+    -c model_providers.openai_chatgpt_https.requires_openai_auth=true \
+    -c model_providers.openai_chatgpt_https.supports_websockets=false
+else
+  set -- \
+    -c model_provider='"openai_https"' \
+    -c model_providers.openai_https.name='"OpenAI HTTPS only"' \
+    -c model_providers.openai_https.base_url='"https://api.openai.com/v1"' \
+    -c model_providers.openai_https.wire_api='"responses"' \
+    -c model_providers.openai_https.requires_openai_auth=true \
+    -c model_providers.openai_https.supports_websockets=false
+fi
+
 codex exec \
   --ephemeral \
   --ignore-user-config \
@@ -12,6 +30,7 @@ codex exec \
   --sandbox read-only \
   --skip-git-repo-check \
   --color never \
+  "$@" \
   -c shell_environment_policy.inherit=none \
   --output-schema contract/mutation-proposal.schema.json \
   --output-last-message runtime/proposal.json \

@@ -51,7 +51,7 @@ export interface DaytonaSdkClientLike {
       autoStopInterval: 0
       ttlMinutes: number
       domainAllowList: string
-      secrets: { CODEX_API_KEY: string }
+      secrets: Record<string, string>
     },
     options: { timeout: number },
   ): Promise<SdkSandboxLike>
@@ -63,6 +63,7 @@ const ALLOWED_WRITE_PATHS = new Set([
   `${DAYTONA_WORKER_ROOT}/runtime/prompt.txt`,
 ])
 const PROPOSAL_PATH = `${DAYTONA_WORKER_ROOT}/runtime/proposal.json`
+const CODEX_AUTH_PATH = '/tmp/fork-fighter-codex/auth.json'
 const ALLOWED_COMMANDS = new Set([
   DAYTONA_WORKER_HEALTH_COMMAND,
   DAYTONA_WORKER_PROPOSAL_COMMAND,
@@ -73,6 +74,7 @@ function labelsFor(scope: DaytonaWorkerScope): Record<string, string> {
     'fork-fighter-role': 'game-master',
     'fork-fighter-match': scope.matchId,
     'fork-fighter-persona': scope.persona,
+    'fork-fighter-auth': scope.codexAuthMode ?? 'api-key',
   }
 }
 
@@ -146,12 +148,14 @@ export class DaytonaSdkWorkerProvider implements DaytonaWorkerProvider {
       snapshots: [scope.snapshotName],
     })) {
       await this.#ensureStarted(sandbox)
+      await this.#configureAuth(sandbox, scope)
       return new DaytonaSdkWorkerSandbox(sandbox)
     }
     return undefined
   }
 
   async create(scope: DaytonaWorkerScope): Promise<DaytonaWorkerSandbox> {
+    const chatgptAuth = scope.codexAuthMode === 'chatgpt'
     const sandbox = await this.#client.create(
       {
         name: workerName(scope),
@@ -160,12 +164,38 @@ export class DaytonaSdkWorkerProvider implements DaytonaWorkerProvider {
         public: false,
         autoStopInterval: 0,
         ttlMinutes: scope.ttlMinutes,
-        domainAllowList: 'api.openai.com',
-        secrets: { CODEX_API_KEY: scope.codexSecretName },
+        domainAllowList: chatgptAuth ? 'chatgpt.com,*.openai.com' : 'api.openai.com',
+        secrets: chatgptAuth ? {} : { CODEX_API_KEY: scope.codexSecretName },
       },
       { timeout: 60 },
     )
+    await this.#configureAuth(sandbox, scope)
     return new DaytonaSdkWorkerSandbox(sandbox)
+  }
+
+  async #configureAuth(
+    sandbox: SdkSandboxLike,
+    scope: DaytonaWorkerScope,
+  ): Promise<void> {
+    if (scope.codexAuthMode !== 'chatgpt') return
+    if (!scope.codexAuthJson) {
+      await sandbox.delete(30, true).catch(() => undefined)
+      throw new TypeError('ChatGPT Codex auth JSON is required.')
+    }
+    await sandbox.fs.uploadFile(
+      Buffer.from(scope.codexAuthJson, 'utf8'),
+      CODEX_AUTH_PATH,
+    )
+    const secured = await sandbox.process.executeCommand(
+      `chmod 600 ${CODEX_AUTH_PATH}`,
+      DAYTONA_WORKER_ROOT,
+      undefined,
+      10,
+    )
+    if (secured.exitCode !== 0) {
+      await sandbox.delete(30, true).catch(() => undefined)
+      throw new Error('Failed to secure the ChatGPT Codex auth cache.')
+    }
   }
 
   async #ensureStarted(sandbox: SdkSandboxLike): Promise<void> {

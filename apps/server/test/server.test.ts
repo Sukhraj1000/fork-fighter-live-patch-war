@@ -34,6 +34,23 @@ afterEach(async () => {
 })
 
 describe('match HTTP API', () => {
+  it('reports the active runtime without exposing configuration secrets', async () => {
+    const server = createMatchServer({
+      provider: 'mock',
+      dependencies: dependencies(),
+    })
+    openServers.push(server)
+
+    const response = await server.app.inject({ method: 'GET', url: '/api/runtime' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({
+      provider: 'mock',
+      sandboxed: false,
+      parallelGameMasters: 3,
+      maxActivePatches: 1,
+    })
+  })
+
   it('creates and ends matches and ingests retry-safe telemetry and event batches', async () => {
     const logStore = new InMemoryMatchLogStore()
     const server = createMatchServer({
@@ -121,6 +138,32 @@ describe('match HTTP API', () => {
     })
     expect(afterEnd.statusCode).toBe(409)
     expect(afterEnd.json().error.code).toBe('match_ended')
+  })
+
+  it('closes match-scoped agents exactly once when a match ends', async () => {
+    const base = dependencies()
+    const closed: string[] = []
+    const host = new MatchHost({
+      ...base,
+      agents: base.agents.map((agent) => ({
+        persona: agent.persona,
+        propose: (request, signal) => agent.propose(request, signal),
+        async closeMatch(matchId) {
+          closed.push(`${agent.persona}:${matchId}`)
+        },
+      })),
+    })
+
+    await host.createMatch({ matchId: 'match-cleanup', autoStart: false })
+    await host.endMatch('match-cleanup')
+    await host.endMatch('match-cleanup')
+
+    expect(closed.sort()).toEqual([
+      'architect:match-cleanup',
+      'auditor:match-cleanup',
+      'gremlin:match-cleanup',
+    ])
+    await host.close()
   })
 
   it('returns contract errors without leaking request values', async () => {

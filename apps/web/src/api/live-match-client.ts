@@ -6,6 +6,13 @@ import type {
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
+export type RuntimeInfo = {
+  provider: 'mock' | 'daytona'
+  sandboxed: boolean
+  parallelGameMasters: number
+  maxActivePatches: number
+}
+
 function apiUrl(path: string): string {
   return `${apiBaseUrl}${path}`
 }
@@ -33,6 +40,10 @@ export async function createLiveMatch(): Promise<LiveMatchPayload> {
   return response.live
 }
 
+export function getRuntimeInfo(): Promise<RuntimeInfo> {
+  return jsonRequest<RuntimeInfo>(apiUrl('/api/runtime'))
+}
+
 export async function getLiveMatch(matchId: string): Promise<LiveMatchPayload> {
   const response = await jsonRequest<{ live: LiveMatchPayload }>(
     apiUrl(`/api/live-matches/${encodeURIComponent(matchId)}`),
@@ -55,6 +66,29 @@ export async function sendPlayerCommand(
     method: 'POST',
     body: JSON.stringify(command),
   })
+}
+
+export async function sendRunnerTelemetry(
+  matchId: string,
+  telemetry: {
+    elapsedMs: number
+    pickups: number
+    score: number
+    alive: boolean
+  },
+): Promise<void> {
+  await jsonRequest(
+    apiUrl(`/api/live-matches/${encodeURIComponent(matchId)}/runner-telemetry`),
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        elapsedMs: telemetry.elapsedMs,
+        pickups: telemetry.pickups,
+        score: telemetry.score,
+        alive: telemetry.alive,
+      }),
+    },
+  )
 }
 
 const MATCH_EVENT_TYPES = [

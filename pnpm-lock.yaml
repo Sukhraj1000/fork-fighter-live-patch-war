@@ -48,9 +48,15 @@ importers:
       '@fork-fighter/mutation-validator':
         specifier: workspace:*
         version: link:../../packages/mutation-validator
+      dotenv:
+        specifier: ^17.3.1
+        version: 17.4.2
       fastify:
         specifier: ^5.6.2
         version: 5.12.1
+      zod:
+        specifier: ^4.1.5
+        version: 4.5.4
     devDependencies:
       '@types/node':
         specifier: ^26.4.0

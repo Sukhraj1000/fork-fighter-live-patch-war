@@ -32,9 +32,24 @@ They do not contain third-party visual material.
 ## Player motion concept
 
 `apps/web/design/player-motion-concept.png` was generated with the OpenAI
-built-in image generation tool as the visual reference for the code-authored
-runtime character. It is not loaded or shipped by the web application because
-the generated transparency preview was not suitable for a runtime sprite sheet.
+built-in image generation tool as the visual reference for the runtime
+character. The playable RGBA sheet is shipped as
+`apps/web/public/assets/fork-fighter-runner.png`; its eight cells are four run
+frames followed by idle, jump, dash, and hit. The generated checkerboard was
+removed without altering the coloured character pixels.
+
+The smoother eight-frame gameplay loop is shipped separately as
+`apps/web/public/assets/fork-fighter-run-cycle.png`. It was generated from the
+approved character reference on 2026-08-30 with identical costume, palette,
+direction, and a strict four-by-two layout. Runtime per-frame anchors normalise
+the two sheet rows to one foot baseline, preventing visible crop and position
+jumps without resampling the art.
+
+The death reaction is shipped as the isolated
+`apps/web/public/assets/fork-fighter-hit.png`. It is a pixel-exact extraction of
+the approved hit cell with neighbouring dash fragments removed and 14 pixels of
+transparent gutter added on every edge. Keeping it outside the packed action
+sheet prevents adjacent-frame texture sampling during the death transition.
 
 Final prompt set:
 

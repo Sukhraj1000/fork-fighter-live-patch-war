@@ -10,6 +10,10 @@ export interface DaytonaWorkerScope {
   readonly snapshotName: string
   /** Name of an opaque Daytona organization secret, never its value. */
   readonly codexSecretName: string
+  /** ChatGPT mode copies a file-backed Codex auth cache into the private worker. */
+  readonly codexAuthMode?: 'api-key' | 'chatgpt'
+  /** Sensitive file contents. Never label, log, or return this value. */
+  readonly codexAuthJson?: string
   readonly ttlMinutes: number
 }
 

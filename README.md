@@ -26,9 +26,9 @@ the Up arrow to jump. Score increases for every moment alive and every Fork
 Shard collected.
 
 `pnpm play` builds the Phaser/React client and serves it from Fastify. The
-server-authoritative ticker advances game-core continuously, batches compact
-events into telemetry, and streams agent and patch lifecycle events to the UI
-over SSE.
+browser sends bounded endless-run stats (survival time, score, shards, and
+death state) to the server, which folds them into compact Game Master context.
+Agent and patch lifecycle events stream back to the UI over SSE.
 
 ## Verify everything
 
@@ -57,12 +57,15 @@ is the default:
 GAME_MASTER_PROVIDER=mock pnpm play
 ```
 
-For Daytona mode, create a Daytona API key and an organization secret mounted
-as `CODEX_API_KEY`, then prepare and test the reusable worker snapshot:
+For Daytona mode, create a Daytona API key and prepare the reusable worker
+snapshot. Codex can authenticate with either a Daytona organization API-key
+secret or a file-backed ChatGPT login on trusted private workers:
 
 ```bash
 cp .env.example .env
-# Add DAYTONA_API_KEY and the provider secret name to .env
+# Add DAYTONA_API_KEY, then choose one Codex auth mode in .env:
+# 1. DAYTONA_CODEX_SECRET_NAME for usage-based API access, or
+# 2. DAYTONA_CODEX_AUTH_MODE=chatgpt plus DAYTONA_CODEX_AUTH_FILE
 pnpm --filter @fork-fighter/gm-orchestrator prepare:snapshot
 pnpm daytona:smoke
 GAME_MASTER_PROVIDER=daytona pnpm play
@@ -75,8 +78,10 @@ typed proposal file before the deadline. Snapshot preparation installs the
 pinned Codex CLI, proposal runner, and worker tests once; matches never install
 packages in the hot path.
 
-Credentials remain server-side. A worker failure becomes a typed unavailable
-or timeout result; it never blocks the ticker or bypasses validation. See
+Credentials remain server-side. ChatGPT mode copies the official file-backed
+Codex auth cache only into private, TTL-bound workers and never exposes it to
+the proposal gateway, logs, or browser. A worker failure becomes a typed
+unavailable or timeout result; it never blocks play or bypasses validation. See
 [the live adapter](./docs/daytona-worker-adapter.md) and
 [agent tool contract](./docs/agent-tool-contract.md).
 

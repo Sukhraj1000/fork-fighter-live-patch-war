@@ -17,6 +17,18 @@ interface StoredGrant extends ProposalGrant {
   readonly persona: GameMasterRequest['persona']
 }
 
+/** Converts Codex's required-but-null optional fields back to Zod optionals. */
+function removeNullFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(removeNullFields)
+  if (typeof value !== 'object' || value === null) return value
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== null)
+      .map(([key, entry]) => [key, removeNullFields(entry)]),
+  )
+}
+
 /**
  * A one-use, server-owned delivery boundary. It exposes no game commands or
  * state mutation methods: the only accepted value is the proposal matching the
@@ -67,7 +79,7 @@ export class ScopedProposalGateway {
       return undefined
     }
 
-    const parsed = MutationProposalSchema.safeParse(response)
+    const parsed = MutationProposalSchema.safeParse(removeNullFields(response))
     if (
       !parsed.success ||
       parsed.data.requestId !== stored.requestId ||

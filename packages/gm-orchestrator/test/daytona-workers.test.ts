@@ -311,6 +311,25 @@ describe('scoped proposal gateway', () => {
     const expiredGrant = gateway.issue(request, 100)
     assert.equal(gateway.submit(expiredGrant, proposal, 101), undefined)
   })
+
+  it('normalises nullable structured-output optionals before contract parsing', () => {
+    const gateway = new ScopedProposalGateway()
+    const request = requests(6).gremlin
+    const proposal = createGremlinMockProposal(request)
+    const grant = gateway.issue(request, 100)
+
+    assert.deepEqual(
+      gateway.submit(
+        grant,
+        {
+          ...proposal,
+          mutation: { ...proposal.mutation, objective: null },
+        },
+        99,
+      ),
+      proposal,
+    )
+  })
 })
 
 describe('Codex request adapter', () => {
@@ -321,6 +340,7 @@ describe('Codex request adapter', () => {
 
     assert.equal(schema.type, 'object')
     assert.equal(schema.additionalProperties, false)
+    assert.doesNotMatch(JSON.stringify(schema), /"oneOf"/)
     assert.deepEqual(schema.required, [
       'proposalId',
       'requestId',
@@ -395,6 +415,7 @@ describe('Daytona SDK security adapter', () => {
         'fork-fighter-role': 'game-master',
         'fork-fighter-match': 'match-sdk-security',
         'fork-fighter-persona': 'auditor',
+        'fork-fighter-auth': 'api-key',
       },
       snapshots: ['worker-snapshot-v1'],
     })
@@ -426,5 +447,28 @@ describe('Daytona SDK security adapter', () => {
     assert.deepEqual(commands, [DAYTONA_WORKER_HEALTH_COMMAND])
     await created.destroy()
     assert.equal(deleteCalls, 1)
+
+    commands.length = 0
+    files.clear()
+    const authJson = JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: { refresh_token: 'fixture-refresh-token' },
+    })
+    const chatgptWorker = await provider.create({
+      ...scope,
+      codexAuthMode: 'chatgpt',
+      codexAuthJson: authJson,
+    })
+    const chatgptParams = JSON.stringify(createParams)
+    assert.match(chatgptParams, /"domainAllowList":"chatgpt\.com,\*\.openai\.com"/)
+    assert.match(chatgptParams, /"secrets":\{\}/)
+    assert.doesNotMatch(chatgptParams, /fixture-refresh-token/)
+    assert.equal(
+      files.get('/tmp/fork-fighter-codex/auth.json')?.toString('utf8'),
+      authJson,
+    )
+    assert.deepEqual(commands, ['chmod 600 /tmp/fork-fighter-codex/auth.json'])
+    await chatgptWorker.destroy()
+    assert.equal(deleteCalls, 2)
   })
 })

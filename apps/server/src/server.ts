@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import Fastify, {
   type FastifyInstance,
   type FastifyServerOptions,
 } from 'fastify'
+import { z } from 'zod'
 
 import { JsonlMatchLogStore } from './jsonl-log.js'
 import { createPersistentDaytonaBrains } from './daytona-agent-brain.js'
@@ -22,6 +24,7 @@ import {
 import { MatchHost, MatchHostError } from './match-host.js'
 import {
   defaultCapabilities,
+  runtimeCapabilities,
 } from './mock-dependencies.js'
 import { redactForExternal } from './redaction.js'
 import { registerBuiltClient } from './static-client.js'
@@ -38,6 +41,13 @@ const systemClock: MatchClock = {
     clearTimeout(handle as NodeJS.Timeout)
   },
 }
+
+const EndlessRunnerTelemetrySchema = z.strictObject({
+  elapsedMs: z.number().int().min(0).max(86_400_000),
+  pickups: z.number().int().min(0).max(1_000_000),
+  score: z.number().int().min(0).max(1_000_000_000),
+  alive: z.boolean(),
+})
 
 export interface MatchServerOptions {
   fastify?: FastifyServerOptions
@@ -75,20 +85,63 @@ function positiveInteger(
   return parsed
 }
 
-function defaultAgents(options: MatchServerOptions): MatchHostDependencies['agents'] {
+function gameMasterProvider(options: MatchServerOptions): 'mock' | 'daytona' {
   const provider = options.provider ?? process.env.GAME_MASTER_PROVIDER ?? 'mock'
+  if (provider !== 'mock' && provider !== 'daytona') {
+    throw new Error('GAME_MASTER_PROVIDER must be mock or daytona.')
+  }
+  return provider
+}
+
+function codexAuthOptions(): {
+  codexAuthMode: 'api-key' | 'chatgpt'
+  codexAuthJson?: string
+} {
+  const codexAuthMode = process.env.DAYTONA_CODEX_AUTH_MODE ?? 'api-key'
+  if (codexAuthMode === 'api-key') return { codexAuthMode }
+  if (codexAuthMode !== 'chatgpt') {
+    throw new Error('DAYTONA_CODEX_AUTH_MODE must be api-key or chatgpt.')
+  }
+  const authFile = process.env.DAYTONA_CODEX_AUTH_FILE?.trim()
+  if (!authFile) {
+    throw new Error('ChatGPT mode requires DAYTONA_CODEX_AUTH_FILE.')
+  }
+  const codexAuthJson = readFileSync(resolve(authFile), 'utf8')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(codexAuthJson)
+  } catch {
+    throw new Error('DAYTONA_CODEX_AUTH_FILE must contain valid JSON.')
+  }
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    (parsed as { auth_mode?: unknown }).auth_mode !== 'chatgpt' ||
+    !(parsed as { tokens?: { refresh_token?: unknown } }).tokens?.refresh_token
+  ) {
+    throw new Error('DAYTONA_CODEX_AUTH_FILE must contain managed ChatGPT auth.')
+  }
+  return { codexAuthMode, codexAuthJson }
+}
+
+function defaultAgents(options: MatchServerOptions): MatchHostDependencies['agents'] {
+  const provider = gameMasterProvider(options)
   if (provider === 'daytona') {
     const snapshotName = process.env.DAYTONA_WORKER_SNAPSHOT
-    const codexSecretName = process.env.DAYTONA_CODEX_SECRET_NAME
+    const auth = codexAuthOptions()
+    const codexSecretName =
+      process.env.DAYTONA_CODEX_SECRET_NAME ??
+      (auth.codexAuthMode === 'chatgpt' ? 'chatgpt-auth-file' : undefined)
     if (!snapshotName || !codexSecretName) {
       throw new Error(
-        'Daytona mode requires DAYTONA_WORKER_SNAPSHOT and DAYTONA_CODEX_SECRET_NAME.',
+        'Daytona mode requires a worker snapshot and either an API-key secret or ChatGPT auth file.',
       )
     }
     return adaptAgentBrains(
       createPersistentDaytonaBrains({
         snapshotName,
         codexSecretName,
+        ...auth,
         ttlMinutes: positiveInteger(
           process.env.DAYTONA_WORKER_TTL_MINUTES,
           30,
@@ -102,10 +155,6 @@ function defaultAgents(options: MatchServerOptions): MatchHostDependencies['agen
       }),
     )
   }
-  if (provider !== 'mock') {
-    throw new Error('GAME_MASTER_PROVIDER must be mock or daytona.')
-  }
-
   const delayMs = positiveInteger(
     process.env.MOCK_AGENT_DELAY_MS,
     1,
@@ -128,13 +177,16 @@ function resolveDependencies(
   gameStates: LiveGameStateStore,
 ): MatchHostDependencies {
   const overrides = options.dependencies ?? {}
+  const daytonaMode = gameMasterProvider(options) === 'daytona'
   return {
     agents: overrides.agents ?? defaultAgents(options),
     validator:
       overrides.validator ?? createIntegratedValidator((matchId) => gameStates.get(matchId)),
     selector:
       overrides.selector ?? createIntegratedSelector((matchId) => gameStates.get(matchId)),
-    capabilities: overrides.capabilities ?? defaultCapabilities,
+    capabilities:
+      overrides.capabilities ??
+      (daytonaMode ? runtimeCapabilities : defaultCapabilities),
     logStore:
       overrides.logStore ??
       new JsonlMatchLogStore(
@@ -144,12 +196,16 @@ function resolveDependencies(
     idGenerator: overrides.idGenerator ?? randomUUID,
     cadenceMs:
       overrides.cadenceMs ??
-      positiveInteger(process.env.MATCH_PATCH_CADENCE_MS, 6_000, 'MATCH_PATCH_CADENCE_MS'),
+      positiveInteger(
+        process.env.MATCH_PATCH_CADENCE_MS,
+        daytonaMode ? 25_000 : 6_000,
+        'MATCH_PATCH_CADENCE_MS',
+      ),
     proposalDeadlineMs:
       overrides.proposalDeadlineMs ??
       positiveInteger(
         process.env.MATCH_PROPOSAL_DEADLINE_MS,
-        5_000,
+        daytonaMode ? 20_000 : 5_000,
         'MATCH_PROPOSAL_DEADLINE_MS',
       ),
     sseHistorySize: overrides.sseHistorySize ?? 256,
@@ -190,8 +246,15 @@ export function createMatchServer(options: MatchServerOptions = {}): MatchServer
   const dependencies = resolveDependencies(options, gameStates)
   const host = new MatchHost(dependencies)
   const live = new LiveMatchCoordinator(host, gameStates, options.live)
+  const provider = gameMasterProvider(options)
 
   app.get('/health', async () => ({ status: 'ok' }))
+  app.get('/api/runtime', async () => ({
+    provider,
+    sandboxed: provider === 'daytona',
+    parallelGameMasters: 3,
+    maxActivePatches: 1,
+  }))
 
   app.post('/api/matches', async (request, reply) => {
     const body =
@@ -226,6 +289,16 @@ export function createMatchServer(options: MatchServerOptions = {}): MatchServer
       reply
         .code(202)
         .send({ live: live.queueCommand(request.params.matchId, request.body) }),
+  )
+
+  app.post<{ Params: { matchId: string } }>(
+    '/api/live-matches/:matchId/runner-telemetry',
+    async (request, reply) => {
+      const telemetry = EndlessRunnerTelemetrySchema.parse(request.body)
+      return reply
+        .code(202)
+        .send({ live: await live.ingestRunnerTelemetry(request.params.matchId, telemetry) })
+    },
   )
 
   app.post<{ Params: { matchId: string } }>(

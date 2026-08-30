@@ -36,6 +36,7 @@ export interface GameMasterAgent {
     request: GameMasterRequest,
     signal: AbortSignal,
   ): Promise<ProposalResult>
+  closeMatch?(matchId: string): Promise<void>
   close?(): Promise<void>
 }
 

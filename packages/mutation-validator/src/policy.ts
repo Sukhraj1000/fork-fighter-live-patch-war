@@ -5,7 +5,8 @@ import type {
 } from './types.js'
 
 export const DEFAULT_VALIDATOR_POLICY: ValidatorPolicy = Object.freeze({
-  maxActiveMutations: 2,
+  // Game Masters may draft in parallel, but only one patch enters the run.
+  maxActiveMutations: 1,
   maxDurationMs: 30_000,
   maxTriggerActivations: 12,
   maxSpawnedEntities: 12,

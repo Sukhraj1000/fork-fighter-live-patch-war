@@ -1,380 +1,225 @@
 # Fork Fighter: Live Patch War
 
-## Project summary
+## Product
 
-**Fork Fighter** is a fast, replayable 2D action game where three long-running
-AI game masters continuously design and test new rule mutations while the
-player is still playing.
+Fork Fighter is an endless 2D score-chaser. The runner moves automatically;
+the player uses Space, W, Up, or a screen tap to jump. Time alive and collected
+Fork Shards increase the score. One obstacle hit ends the run, shows the final
+score and personal best, and offers an immediate restart.
 
-The game itself remains stable and deterministic. Agents cannot rewrite the
-engine or execute arbitrary code in the browser. Instead, they author typed,
-validated mutation configurations that the authoritative server may apply at
-safe patch boundaries.
+While the player runs, three Game Masters independently author typed mutations:
 
-> **Pitch:** You are not fighting only the level. You are fighting three AI
-> game masters that study how you play and live-patch the game against you.
+- **Architect** prefers coherent systemic pressure.
+- **Gremlin** attacks repetitive and overly safe play.
+- **Auditor** applies measured, fair counter-pressure.
 
-## Goal
+The three proposals are produced concurrently. The server validates every
+candidate and allows at most one live patch at a time. Accepted mutations are
+translated through the browser's obstacle-only adapter; agents never edit or
+execute game code.
 
-Build a polished 60–90 second game loop in which:
-
-1. The player moves, dashes, collects Fork Cores, banks them at relays, and
-   attempts to reach extraction.
-2. The server measures how the player is performing.
-3. Every 20 seconds, three persistent game-master agents propose the next
-   mutation in parallel.
-4. Every proposal passes through strict schema, capability, difficulty, and
-   playability validation.
-5. One valid proposal is selected and applied live without pausing the game.
-6. The outcome becomes retained context for the next patch cycle.
-
-## Product principles
-
-### Typed configs, not arbitrary code
-
-The Mutation SDK is a typed configuration contract. Agents compose approved
-triggers, effects, objectives, limits, and cleanup rules. They do not receive a
-free-form code-writing interface and do not select from a static list of
-difficulty sliders.
-
-### Stable game shell
-
-Player movement, physics, collision, scoring, map validity, extraction, and HUD
-remain deterministic and server-authoritative. Agents enrich the game but
-cannot become a single point of failure.
-
-### Server-owned memory
-
-The server owns the canonical performance log and compact director context.
-Daytona sandboxes remain alive for the match, but no sandbox owns irreplaceable
-state. An agent can be restarted and given the current context again.
-
-### Gradual, recoverable difficulty
-
-Mutations must challenge the player's observed strategy without instantly
-making the run impossible. Every mutation expires or provides explicit cleanup
-behaviour.
-
-## Roles of Codex and Daytona
-
-### Codex
-
-Codex authors one structured `MutationDefinition` per game master and patch
-cycle. It receives compact telemetry, prior outcomes, the current budget, and
-the Mutation SDK capability reference. Its output is schema-constrained and is
-never trusted until validated.
-
-Codex is also used throughout development to implement, test, debug, and
-document the project.
-
-### Daytona
-
-Daytona provides three long-running, isolated agent environments for each
-match. Each environment is prepared with the proposal runner, schema,
-validation tests, and exactly one persona:
-
-- **Architect:** proposes coherent systemic changes and secondary objectives.
-- **Gremlin:** attacks repetitive or overly safe player strategies.
-- **Auditor:** proposes fair counter-pressure and looks for broken or
-  overpowered designs.
-
-The environments draft and test proposals in parallel while the current game
-continues. They receive only narrow, match-scoped proposal capabilities.
-
-## High-level architecture
+## Player loop
 
 ```text
-Stable game shell
-  ├─ player, physics, map, HUD, scoring, extraction
-  ├─ deterministic game-core
-  └─ mutation runtime
-       └─ applies validated typed configs
-
-Authoritative server
-  ├─ match state and event log
-  ├─ player performance telemetry
-  ├─ active, expired, and rejected mutations
-  ├─ outcomes of prior patches
-  ├─ current difficulty budget
-  └─ proposal validator and selector
-
-Long-running Daytona game masters
-  ├─ Architect
-  ├─ Gremlin
-  └─ Auditor
-       └─ each authors and tests one proposal in parallel
+Start run
+  -> short control countdown
+  -> auto-run and jump
+  -> collect Fork Shards
+  -> score rises with survival time + pickups
+  -> Game Master obstacle patches enter the route
+  -> one collision ends the run
+  -> final score + personal best
+  -> restart
 ```
+
+The baseline course remains playable without a server or model provider. If the
+API cannot be reached, the client switches to a deterministic local Game Master
+cycle instead of blocking the game.
+
+## Feedback loop
 
 ```text
-Player events
-    ↓
-RunTelemetry + MatchDirectorContext
-    ↓
-Three parallel Daytona/Codex proposals
-    ↓
-Schema → capability → invariant → micro-simulation validation
-    ↓
-Deterministic selection
-    ↓
-Patch announcement → live activation → expiry/cleanup
-    ↓
-PatchOutcome retained for the next cycle
+Visible endless-run stats
+  -> bounded runner telemetry endpoint
+  -> compact server-owned director context
+  -> Architect, Gremlin, and Auditor draft in parallel
+  -> schema/capability/cleanup/invariant/difficulty/novelty simulation gates
+  -> deterministic selection
+  -> one typed patch enters the game
+  -> patch outcome and player performance inform the next cycle
 ```
 
-## Core contracts
+The browser reports only:
 
-Shared runtime contracts must be defined with Zod first, with TypeScript types
-inferred from those schemas. These contracts freeze before parallel
-implementation begins.
+- elapsed survival time;
+- Fork Shards collected;
+- score;
+- alive/dead state.
 
-### Mutation definition
+The server maps those values into the frozen `RunTelemetry` compatibility
+contract. Survival progress, pickup rate, health, death, and challenge trend are
+therefore available to the next Game Master request. The provider never receives
+browser objects, controls, credentials, arbitrary conversation history, or
+canonical server functions.
 
-```ts
-export type MutationDefinition = {
-  id: string
-  title: string
-  patchNote: string
-  author: 'architect' | 'gremlin' | 'auditor'
-  durationMs: number
-  difficultyCost: number
-  triggers: MutationTrigger[]
-  objective?: SecondaryObjective
-  cleanup: CleanupRule[]
-}
-```
+## Stable shell
 
-Examples of authored compositions:
+The Phaser shell owns the fixed rules:
 
-- Collect a core → spawn a slow collector → despawn it when a core is banked.
-- Every eight seconds → move a hazard toward the most-used route → spawn a
-  risky bonus core elsewhere.
-- Activate a contract → require one additional banked core for extraction →
-  grant a time bonus when completed.
+- automatic forward motion;
+- buffered jump input;
+- collision and one-hit death;
+- baseline obstacle pacing;
+- pickup collision;
+- score calculation;
+- countdown, game-over state, personal best, and restart.
 
-### Run telemetry
+A short grace period teaches the control before the first hazard. Collision
+bounds and the pacing ramp are deliberately more forgiving at the beginning,
+then tighten as survival time increases.
 
-```ts
-export type RunTelemetry = {
-  matchId: string
-  patchIndex: number
-  elapsedMs: number
-  health: number
-  coresHeld: number
-  coresBanked: number
-  primaryObjectiveProgress: number
-  recentDamage: number
-  recentDeaths: number
-  routeRepetition: number
-  lowRiskCoreRate: number
-  highRiskCoreRate: number
-  activeMutationIds: string[]
-  recentPatchOutcomes: PatchOutcome[]
-  challengeTrend: 'too_easy' | 'on_target' | 'too_hard'
-}
-```
+## Typed mutation boundary
 
-### Agent proposal boundary
+A Game Master may return exactly one `MutationProposal`. It cannot send player
+commands, source code, scripts, engine calls, or arbitrary JavaScript. The
+proposal must match the requesting persona and request id and remain within the
+capabilities advertised by the server.
 
-No game master can issue player commands, change canonical game state, or call
-engine functions. Its only supported output is a `MutationProposal` containing
-one `MutationDefinition` and proposal metadata.
+The current live runtime advertises only capabilities it can execute safely.
+Contract-valid effects outside that slice are rejected visibly rather than
+silently ignored.
 
-## Retained agent context
+## Validation and turn-taking
 
-Every patch cycle, each game master receives:
+A proposal must pass every gate:
 
-- Current health, progress, held cores, and banked cores.
-- Recent damage, deaths, and objective progress.
-- Route repetition and preference for safe or risky rewards.
-- Active mutations and concepts already rejected.
-- Outcomes of previous patches.
-- Current difficulty trend: `too_easy`, `on_target`, or `too_hard`.
-- Remaining difficulty budget.
-- Its own recent proposal history.
-- The current Mutation SDK schema and capability reference.
+1. Zod and structured-output schema.
+2. Capability and numeric limits.
+3. Complete cleanup semantics.
+4. Stable-game invariants and route playability.
+5. Current difficulty budget and no escalation for a struggling player.
+6. Novelty against recent and active mechanics.
+7. Deterministic micro-simulation.
+8. Current playable-runtime support.
 
-This compact snapshot replaces an uncontrolled conversation history. The
-server can replay it into a restarted agent without losing the run.
+Drafting remains concurrent. Activation does not: the validator policy sets
+`maxActiveMutations` to one, and the match host has a second activation guard.
+A later candidate is rejected or deferred while a prior patch is active.
 
-## Validation and selection
+## Daytona runtime
 
-A proposal must pass every gate before it can enter the live game:
+A live match owns three private Daytona workers, one per persona. Workers are
+created or claimed concurrently from a prepared snapshot and retained across
+patch cycles. The snapshot contains the pinned Codex CLI, proposal command, JSON
+schema runner, and worker self-test, so no package installation occurs in the
+hot path.
 
-1. **Schema:** all required fields and known trigger/effect variants are valid.
-2. **Capabilities:** spawn counts, modifier ranges, duration, and active
-   mutation limits remain within policy.
-3. **Cleanup:** every temporary entity or rule has explicit removal semantics.
-4. **Invariants:** extraction remains reachable, the primary objective remains
-   intact, and no immediate unfair collision is introduced.
-5. **Difficulty:** cost fits the current budget and a struggling player does
-   not receive an escalation.
-6. **Novelty:** the proposal does not repeat an active or recently ineffective
-   mechanic.
-7. **Micro-simulation:** deterministic test runs prove the config applies and
-   expires without corrupting state.
+Workers receive only three host-written files:
 
-The selector ranks only valid proposals using challenge fit, novelty, and
-expected play value. If no fresh proposal is ready by the deadline, the game
-uses a previously validated unused candidate or keeps the current rules for one
-cycle.
+- `contract/mutation-proposal.schema.json`;
+- `runtime/request.json`;
+- `runtime/prompt.txt`.
 
-## Repository structure
+The host reads only `runtime/proposal.json`. A one-use scoped gateway consumes
+each grant even when output is malformed, late, replayed, or cross-persona.
+Private workers are deleted at match end and also carry a TTL backstop.
 
-```text
-fork-fighter/
-  apps/
-    web/                         # Phaser/React rendering and HUD
-    server/                      # Fastify API and authoritative match host
-  packages/
-    contracts/                   # Shared Zod schemas and public interfaces
-    game-core/                   # Deterministic world, collision, scoring
-    mutation-runtime/            # Applies valid configs to GameState
-    mutation-validator/          # Safety, invariants, and selection
-    director-context/            # Telemetry, compact memory, cadence
-    gm-orchestrator/             # Daytona lifecycle and Codex proposals
-  fixtures/
-    mutations/                   # Valid and invalid mutation fixtures
-    runs/                        # Deterministic telemetry/replay fixtures
-    demo/                        # Reliable seeded demo match
-  tests/
-    e2e/                         # Browser and patch-cycle tests
-  docs/
-    mutation-sdk.md
-    agent-tool-contract.md
-    demo-script.md
-```
+## Codex authentication
+
+Two server-only modes are supported:
+
+- `api-key`: a Daytona organization secret is mounted as `CODEX_API_KEY` and
+  resolved only for `api.openai.com`.
+- `chatgpt`: for trusted private automation, a file-backed official Codex
+  `auth.json` is validated and copied into each private worker's `CODEX_HOME`.
+  The file is never included in labels, sandbox create parameters, logs,
+  prompts, proposals, or browser responses.
+
+The proposal command uses HTTPS-only providers, avoiding repeated WebSocket
+fallback delays in Daytona's restricted network. ChatGPT workers allow only
+`chatgpt.com` and explicitly wildcarded OpenAI authentication domains. API-key workers allow only
+`api.openai.com`.
+
+## Failure behavior
+
+Gameplay never waits for the model. A provider timeout or unavailable worker is
+recorded as a typed failure, shown in the activity feed, and skipped for that
+cycle. The runner, score, input, and local obstacle course continue. A killed
+worker is replaced from the prepared snapshot and receives current server-owned
+context.
+
+## Runtime labels
+
+`GET /api/runtime` reports the active provider, whether workers are sandboxed,
+the number of parallel Game Masters, and the one-patch activation limit. The UI
+uses this response so mock mode never claims to be Daytona and a real run can
+show `DAYTONA // 3 PARALLEL CODEX WORKERS` truthfully.
+
+## Main HTTP surface
+
+- `GET /health`
+- `GET /api/runtime`
+- `POST /api/live-matches`
+- `GET /api/live-matches/:matchId`
+- `POST /api/live-matches/:matchId/runner-telemetry`
+- `POST /api/live-matches/:matchId/end`
+- `GET /api/matches/:matchId/events`
+- `GET /api/matches/:matchId/log`
+
+The lower-level deterministic game-core command, telemetry, and event-batch
+routes remain available for integration tests and validator micro-simulation.
 
 ## Technology
 
-- Vite, React, and TypeScript
-- Phaser 3 for rendering and input
-- Node.js and Fastify for the game/director server
-- Zod for runtime schemas
-- Vitest for unit and integration tests
-- Daytona TypeScript SDK for persistent isolated agents
-- Codex structured output for typed mutation authoring
+- TypeScript, React, Vite, and Phaser 3
+- Fastify and server-sent events
+- Zod contracts
+- Vitest/Node tests and Playwright browser tests
+- JSONL match logs
+- Daytona TypeScript SDK
+- Codex CLI structured output
 
-## Conflict-safe implementation lanes
+## Repository layout
 
-| Lane | Owns |
-|---|---|
-| Contracts | `packages/contracts/` until interface freeze |
-| Game | `packages/game-core/` |
-| Visual | `apps/web/` |
-| Mutation | `packages/mutation-runtime/`, `packages/mutation-validator/` |
-| Director | `packages/director-context/` |
-| Daytona/Codex | `packages/gm-orchestrator/` |
-| Integration | `apps/server/`, fixtures, and end-to-end tests |
+```text
+apps/web                  Phaser runner, React HUD, controls, local fallback
+apps/server               Match host, telemetry adapter, SSE, provider wiring
+packages/contracts        Frozen Zod and TypeScript contracts
+packages/director-context Compact retained performance context
+packages/game-core        Deterministic validation game simulation
+packages/mutation-runtime Safe mutation application and cleanup
+packages/mutation-validator Validation and deterministic selection
+packages/gm-orchestrator  Daytona workers, Codex schema, scoped gateway
+tests/e2e                 Playwright product-path coverage
+```
 
-After the interface freeze, no lane changes `packages/contracts/` without the
-integration owner's approval. Lanes integrate only through public contracts;
-they do not edit one another's implementation files.
+## Verification contract
 
-## Build order
+`pnpm verify` must prove:
 
-### 0. Freeze the contracts
+- all package typechecks pass;
+- unit and integration suites pass;
+- production builds complete;
+- the endless runner scores, dies in one hit, persists personal best, and
+  restarts;
+- proposal work does not block live game ticks;
+- phone-sized screens have no horizontal overflow and taps reach the canvas
+  through HUD overlays;
+- the local fallback stays playable with the API route unavailable;
+- runner telemetry reaches Game Master context;
+- only one mutation can remain active.
 
-Define and test `GameState`, player commands, game events, mutation schemas,
-telemetry, director context, proposals, and validation results.
+The separate Daytona smoke command must create a real private sandbox from the
+prepared snapshot, execute the installed health command, and delete the sandbox.
+A finished live-provider verification additionally requires at least one real
+Codex proposal to be received, validated, selected or rejected for a recorded
+reason, and reflected in the match log.
 
-**Proof:** valid fixtures pass and unknown, unbounded, uncleanable, and
-over-duration mutations fail.
+## Non-goals
 
-### 1. Build the standalone game
-
-Create a fun, deterministic 2D shell with movement, dash, core collection,
-relay banking, health, scoring, and extraction. It must work with no server,
-Daytona, Codex, or mutation dependency.
-
-**Proof:** a human can complete a full seeded run.
-
-### 2. Add the mutation runtime
-
-Apply one hand-authored typed mutation at a timed boundary. Show its patch note,
-duration, effect, expiry, and cleanup.
-
-**Proof:** the mutation affects play and leaves no stale state after expiry.
-
-### 3. Add telemetry and a local director
-
-Aggregate game events every 20 seconds, classify difficulty, and use mock
-agents to demonstrate gradual adaptation.
-
-**Proof:** weak runs do not escalate; dominant repetitive runs do.
-
-### 4. Add the validator and proposal protocol
-
-Introduce three mock personas, proposal storage, visible rejection reasons,
-invariant checks, and deterministic selection.
-
-**Proof:** invalid or impossible mutations cannot be selected.
-
-### 5. Add Daytona and Codex
-
-Prepare three persistent sandboxes, send compact retained context, request
-schema-constrained proposals in parallel, validate them, and keep the game
-running through timeouts or sandbox failure.
-
-**Proof:** all three environments persist across patch cycles and a restarted
-agent recovers from server-owned context.
-
-### 6. Polish the live-patch experience
-
-Show drafting, validation, rejection, selection, incoming-patch countdown,
-author identity, consequence, duration, and visible in-world effects.
-
-**Proof:** the next change is understandable within two seconds and the game
-never visibly pauses while agents work.
-
-### 7. Optional finale
-
-After the human run, make the game masters play the final mutation stack using
-only normal player commands. Compare all scores under identical rules.
-
-## Demo plan
-
-The two-minute demo should show:
-
-1. The player immediately collecting and banking Fork Cores.
-2. Three named game masters drafting in parallel.
-3. At least one rejected proposal with a concise safety reason.
-4. One selected patch announced and applied without pausing play.
-5. The mutation visibly responding to the player's observed strategy.
-6. The activity log proving Daytona isolation, Codex authorship, validation,
-   selection, and cleanup.
-
-Maintain two demo paths:
-
-- A deterministic seeded path that always demonstrates the complete loop.
-- A genuinely live path that visibly calls the Daytona-backed game masters.
-
-## V1 non-goals
-
-- Arbitrary agent edits to the engine, renderer, or browser source.
-- Arbitrary JavaScript execution in the browser.
-- Multiplayer, accounts, profiles, or persistent progression.
-- LLM authority over collision, score, death, or map validity.
-- Agent player mode before the human game-master loop is complete.
-
-## Acceptance criteria
-
-- A human can play a complete 60–90 second run.
-- The shell remains playable without agents or provider access.
-- Three game masters author candidate configs in parallel.
-- Agents retain compact context derived from player performance and outcomes.
-- Every accepted mutation passes schema, capability, invariant, difficulty, and
-  simulation validation.
-- Mutations adapt gradually and cannot make extraction impossible.
-- The UI shows drafting, rejection, validation, selection, and activation.
-- The match log reconstructs why each patch was accepted or rejected.
-- Codex's role as constrained mutation author is explicit.
-- Daytona's role as persistent isolated parallel compute is explicit.
-
-## First execution slice
-
-Start with contracts only. Freeze and test the mutation, telemetry, game, and
-proposal schemas before parallel implementation begins.
-
-The first playable milestone is the standalone 2D shell. Do not begin live
-Daytona/Codex integration until the local mutation and director feedback loop is
-working with mocks.
+- arbitrary live source edits;
+- browser-side provider credentials;
+- arbitrary JavaScript from agents;
+- multiplayer, accounts, or a database;
+- LLM authority over score, collision, death, or restart;
+- more than one live mutation at a time.

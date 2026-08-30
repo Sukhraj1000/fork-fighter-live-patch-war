@@ -13,6 +13,8 @@ import {
 export interface PersistentDaytonaBrainsOptions {
   snapshotName: string
   codexSecretName: string
+  codexAuthMode?: 'api-key' | 'chatgpt'
+  codexAuthJson?: string
   provider?: DaytonaWorkerProvider
   ttlMinutes?: number
   startupTimeoutMs?: number
@@ -33,6 +35,7 @@ class MatchScopedDaytonaRegistry {
   readonly #options: PersistentDaytonaBrainsOptions
   readonly #provider: DaytonaWorkerProvider
   readonly #pools = new Map<string, PoolEntry>()
+  readonly #closedMatches = new Set<string>()
   #closed = false
   #closePromise: Promise<void> | undefined
 
@@ -45,12 +48,20 @@ class MatchScopedDaytonaRegistry {
     persona: GameMasterPersona,
     request: GameMasterRequest,
   ): Promise<unknown> {
-    if (this.#closed) return undefined
+    if (this.#closed || this.#closedMatches.has(request.context.matchId)) return undefined
     if (request.persona !== persona) return undefined
 
     const entry = this.#pool(request.context.matchId)
     void entry.ready
     return entry.pool.brains[persona].propose(request)
+  }
+
+  async closeMatch(matchId: string): Promise<void> {
+    this.#closedMatches.add(matchId)
+    const entry = this.#pools.get(matchId)
+    if (!entry) return
+    this.#pools.delete(matchId)
+    await entry.pool.close()
   }
 
   close(): Promise<void> {
@@ -69,6 +80,10 @@ class MatchScopedDaytonaRegistry {
       matchId,
       snapshotName: this.#options.snapshotName,
       codexSecretName: this.#options.codexSecretName,
+      codexAuthMode: this.#options.codexAuthMode,
+      ...(this.#options.codexAuthJson === undefined
+        ? {}
+        : { codexAuthJson: this.#options.codexAuthJson }),
       provider: this.#provider,
       ...(this.#options.ttlMinutes === undefined
         ? {}
@@ -100,6 +115,10 @@ class MatchScopedDaytonaBrain implements AgentBrain {
 
   propose(request: GameMasterRequest): Promise<unknown> {
     return this.#registry.propose(this.persona, request)
+  }
+
+  closeMatch(matchId: string): Promise<void> {
+    return this.#registry.closeMatch(matchId)
   }
 
   close(): Promise<void> {

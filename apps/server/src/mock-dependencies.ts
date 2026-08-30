@@ -1,5 +1,6 @@
 import {
   MUTATION_CAPABILITIES,
+  MutationCapabilityReferenceSchema,
   MutationProposalSchema,
   type GameMasterPersona,
   type GameMasterRequest,
@@ -268,3 +269,14 @@ export const deterministicMockSelector: ProposalSelector = {
 }
 
 export const defaultCapabilities = MUTATION_CAPABILITIES
+
+/** Capabilities implemented by the current safe mutation runtime. */
+export const runtimeCapabilities = MutationCapabilityReferenceSchema.parse({
+  ...MUTATION_CAPABILITIES,
+  triggers: ['onCoreCollected'],
+  effects: ['spawnCollector'],
+  limits: {
+    ...MUTATION_CAPABILITIES.limits,
+    maxDurationMs: 30_000,
+  },
+})

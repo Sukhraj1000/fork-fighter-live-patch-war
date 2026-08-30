@@ -161,7 +161,7 @@ describe('mutation validation gates', () => {
       ...structuredClone(validatorContextFixture),
       telemetry: {
         ...structuredClone(validatorContextFixture.telemetry),
-        activeMutationIds: ['active-one', 'active-two'],
+        activeMutationIds: ['active-one'],
       },
     })
     const result = validateMutationProposal({
