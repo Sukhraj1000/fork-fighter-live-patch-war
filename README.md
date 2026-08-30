@@ -23,26 +23,32 @@ architecture, contracts, implementation lanes, build order, and demo plan.
 - The deterministic game and presentation lanes can integrate through the
   shared contract without importing one another.
 
-## Daytona smoke test
+## Daytona worker setup and smoke test
 
 Prerequisites:
 
 - Node.js 20.6 or newer
 - A Daytona API key from
   [the Daytona dashboard](https://app.daytona.io/dashboard/keys)
+- A Daytona organization secret mounted as `CODEX_API_KEY`, restricted
+  to the OpenAI API host
 
 ```bash
 cp .env.example .env
-# Add DAYTONA_API_KEY to .env
+# Add DAYTONA_API_KEY and the provider secret name to .env
 pnpm install
+pnpm --filter @fork-fighter/gm-orchestrator prepare:snapshot
 pnpm dev
 ```
 
 Run the complete workspace verification with `pnpm check`.
 
-The temporary starter creates an isolated sandbox, executes Python, and waits
-for the sandbox to be deleted. It will be moved behind the server-only
-game-master orchestrator as the monorepo is scaffolded.
+Snapshot preparation installs the pinned Codex CLI, proposal runner, and worker
+test once. The server-only smoke test then creates an isolated worker from that
+snapshot, verifies the installed contract, and deletes it. Live matches use
+`DaytonaGameMasterPool` to retain one private sandbox per persona across patch
+cycles. See [the agent tool contract](./docs/agent-tool-contract.md) for scoped
+access, recovery, deadlines, and credential boundaries.
 
 ## Safety boundary
 

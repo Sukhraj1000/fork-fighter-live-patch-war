@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+umask 077
+
+cd /opt/fork-fighter-worker
+rm -f runtime/proposal.json
+
+codex exec \
+  --ephemeral \
+  --ignore-user-config \
+  --ignore-rules \
+  --sandbox read-only \
+  --skip-git-repo-check \
+  --color never \
+  -c shell_environment_policy.inherit=none \
+  --output-schema contract/mutation-proposal.schema.json \
+  --output-last-message runtime/proposal.json \
+  - < runtime/prompt.txt
+
+node lib/validate-proposal.mjs runtime/request.json runtime/proposal.json
