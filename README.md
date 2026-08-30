@@ -14,10 +14,14 @@ architecture, contracts, implementation lanes, build order, and demo plan.
 
 ## Current status
 
-- Daytona TypeScript SDK installed and authenticated locally.
-- Live sandbox create, execute, and cleanup smoke test verified.
-- Project specification and implementation plan complete.
-- Monorepo contracts and playable game shell are the next milestones.
+- The pnpm workspace and frozen Zod-first shared contracts are available in
+  `@fork-fighter/contracts`.
+- Canonical game-state, event-batch, and valid-mutation fixtures support
+  independent implementation lanes.
+- Daytona TypeScript SDK is installed and the live sandbox smoke test has been
+  verified locally.
+- The deterministic game and presentation lanes can integrate through the
+  shared contract without importing one another.
 
 ## Daytona smoke test
 
@@ -30,9 +34,11 @@ Prerequisites:
 ```bash
 cp .env.example .env
 # Add DAYTONA_API_KEY to .env
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
+
+Run the complete workspace verification with `pnpm check`.
 
 The temporary starter creates an isolated sandbox, executes Python, and waits
 for the sandbox to be deleted. It will be moved behind the server-only
