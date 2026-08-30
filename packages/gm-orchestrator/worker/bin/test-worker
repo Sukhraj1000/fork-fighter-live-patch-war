@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+cd /opt/fork-fighter-worker
+command -v codex >/dev/null
+codex --version >/dev/null
+node --check lib/validate-proposal.mjs
+test -x bin/propose
+test -d runtime
+
+if [ "${1:-}" != "--image-build" ]; then
+  test -s contract/mutation-proposal.schema.json
+fi

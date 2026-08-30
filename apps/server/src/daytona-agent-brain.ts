@@ -1,115 +1,119 @@
-import { Daytona, type Sandbox } from '@daytona/sdk'
 import type {
   GameMasterPersona,
   GameMasterRequest,
 } from '@fork-fighter/contracts'
 import {
-  GAME_MASTER_PERSONAS,
-  ProviderUnavailableError,
+  DaytonaGameMasterPool,
+  createDaytonaSdkWorkerProvider,
   type AgentBrain,
+  type DaytonaWorkerProvider,
   type GameMasterBrains,
 } from '@fork-fighter/gm-orchestrator'
 
-export interface DaytonaWorkerBrainOptions {
-  snapshot: string
-  command: string
-  createTimeoutSeconds?: number
+export interface PersistentDaytonaBrainsOptions {
+  snapshotName: string
+  codexSecretName: string
+  provider?: DaytonaWorkerProvider
+  ttlMinutes?: number
+  startupTimeoutMs?: number
+}
+
+interface PoolEntry {
+  pool: DaytonaGameMasterPool
+  ready: Promise<void>
 }
 
 /**
- * Adapter for the persistent worker image owned by issue #9. The worker reads
- * one compact request from FORK_FIGHTER_REQUEST_JSON and prints exactly one
- * MutationProposal JSON object. AgentBrain still treats that output as
- * untrusted and validates it before the server can see a proposal.
+ * MatchHost exposes one AgentBrain per persona, while Daytona workers are
+ * match-scoped. This registry bridges those lifetimes: the first proposal for
+ * a match warms one issue-#9 pool, and later patch cycles reuse the same three
+ * private workers.
  */
-export class DaytonaWorkerBrain implements AgentBrain {
-  readonly #daytona: Daytona
-  readonly #persona: GameMasterPersona
-  readonly #options: DaytonaWorkerBrainOptions
-  #sandboxPromise?: Promise<Sandbox>
+class MatchScopedDaytonaRegistry {
+  readonly #options: PersistentDaytonaBrainsOptions
+  readonly #provider: DaytonaWorkerProvider
+  readonly #pools = new Map<string, PoolEntry>()
+  #closed = false
+  #closePromise: Promise<void> | undefined
 
-  constructor(
-    persona: GameMasterPersona,
-    options: DaytonaWorkerBrainOptions,
-    daytona = new Daytona(),
-  ) {
-    this.#persona = persona
+  constructor(options: PersistentDaytonaBrainsOptions) {
     this.#options = options
-    this.#daytona = daytona
+    this.#provider = options.provider ?? createDaytonaSdkWorkerProvider()
   }
 
-  async propose(request: GameMasterRequest): Promise<unknown> {
-    if (request.persona !== this.#persona) {
-      throw new TypeError('Daytona worker persona does not match the request.')
+  async propose(
+    persona: GameMasterPersona,
+    request: GameMasterRequest,
+  ): Promise<unknown> {
+    if (this.#closed) return undefined
+    if (request.persona !== persona) return undefined
+
+    const entry = this.#pool(request.context.matchId)
+    void entry.ready
+    return entry.pool.brains[persona].propose(request)
+  }
+
+  close(): Promise<void> {
+    this.#closed = true
+    this.#closePromise ??= Promise.all(
+      [...this.#pools.values()].map(({ pool }) => pool.close()),
+    ).then(() => undefined)
+    return this.#closePromise
+  }
+
+  #pool(matchId: string): PoolEntry {
+    const existing = this.#pools.get(matchId)
+    if (existing) return existing
+
+    const pool = new DaytonaGameMasterPool({
+      matchId,
+      snapshotName: this.#options.snapshotName,
+      codexSecretName: this.#options.codexSecretName,
+      provider: this.#provider,
+      ...(this.#options.ttlMinutes === undefined
+        ? {}
+        : { ttlMinutes: this.#options.ttlMinutes }),
+      ...(this.#options.startupTimeoutMs === undefined
+        ? {}
+        : { startupTimeoutMs: this.#options.startupTimeoutMs }),
+    })
+    const entry: PoolEntry = {
+      pool,
+      ready: pool.start().then(() => undefined),
     }
-
-    try {
-      const sandbox = await this.#sandbox()
-      const response = await sandbox.process.executeCommand(
-        this.#options.command,
-        undefined,
-        {
-          FORK_FIGHTER_PERSONA: this.#persona,
-          FORK_FIGHTER_REQUEST_JSON: JSON.stringify(request),
-        },
-        Math.max(1, Math.ceil(request.deadlineMs / 1_000)),
-      )
-      if (response.exitCode !== 0) {
-        throw new Error('Daytona proposal worker exited unsuccessfully.')
-      }
-      const output = response.result.trim()
-      const jsonLine = output
-        .split('\n')
-        .reverse()
-        .find((line) => line.trim().startsWith('{'))
-      if (!jsonLine) {
-        throw new Error('Daytona proposal worker returned no JSON object.')
-      }
-      return JSON.parse(jsonLine) as unknown
-    } catch {
-      await this.#discardSandbox()
-      throw new ProviderUnavailableError('Daytona proposal worker is unavailable.')
-    }
-  }
-
-  async close(): Promise<void> {
-    await this.#discardSandbox()
-  }
-
-  #sandbox(): Promise<Sandbox> {
-    this.#sandboxPromise ??= this.#daytona.create(
-      {
-        snapshot: this.#options.snapshot,
-        language: 'typescript',
-        envVars: { FORK_FIGHTER_PERSONA: this.#persona },
-        autoStopInterval: 15,
-        autoArchiveInterval: 30,
-      },
-      { timeout: this.#options.createTimeoutSeconds ?? 60 },
-    )
-    return this.#sandboxPromise
-  }
-
-  async #discardSandbox(): Promise<void> {
-    const pending = this.#sandboxPromise
-    this.#sandboxPromise = undefined
-    if (!pending) return
-    try {
-      const sandbox = await pending
-      await sandbox.delete(60, true)
-    } catch {
-      // A missing or already-dead worker is safe to recreate on the next cycle.
-    }
+    this.#pools.set(matchId, entry)
+    return entry
   }
 }
 
-export function createDaytonaWorkerBrains(
-  options: DaytonaWorkerBrainOptions,
+class MatchScopedDaytonaBrain implements AgentBrain {
+  readonly persona: GameMasterPersona
+  readonly #registry: MatchScopedDaytonaRegistry
+
+  constructor(
+    persona: GameMasterPersona,
+    registry: MatchScopedDaytonaRegistry,
+  ) {
+    this.persona = persona
+    this.#registry = registry
+  }
+
+  propose(request: GameMasterRequest): Promise<unknown> {
+    return this.#registry.propose(this.persona, request)
+  }
+
+  close(): Promise<void> {
+    return this.#registry.close()
+  }
+}
+
+export function createPersistentDaytonaBrains(
+  options: PersistentDaytonaBrainsOptions,
 ): GameMasterBrains {
-  return Object.fromEntries(
-    GAME_MASTER_PERSONAS.map((persona) => [
-      persona,
-      new DaytonaWorkerBrain(persona, options),
-    ]),
-  ) as unknown as GameMasterBrains
+  const registry = new MatchScopedDaytonaRegistry(options)
+  return {
+    architect: new MatchScopedDaytonaBrain('architect', registry),
+    gremlin: new MatchScopedDaytonaBrain('gremlin', registry),
+    auditor: new MatchScopedDaytonaBrain('auditor', registry),
+  }
 }

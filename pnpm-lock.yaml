@@ -8,9 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@daytona/sdk':
-        specifier: ^0.207.0
-        version: 0.207.0
+      '@fork-fighter/gm-orchestrator':
+        specifier: workspace:*
+        version: link:packages/gm-orchestrator
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -30,9 +30,6 @@ importers:
 
   apps/server:
     dependencies:
-      '@daytona/sdk':
-        specifier: ^0.207.0
-        version: 0.207.0
       '@fork-fighter/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -129,9 +126,22 @@ importers:
 
   packages/gm-orchestrator:
     dependencies:
+      '@daytona/sdk':
+        specifier: ^0.207.0
+        version: 0.207.0
       '@fork-fighter/contracts':
         specifier: workspace:*
         version: link:../contracts
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
+      zod:
+        specifier: ^4.1.5
+        version: 4.5.4
+    devDependencies:
+      '@types/node':
+        specifier: ^26.4.0
+        version: 26.4.0
 
   packages/mutation-runtime:
     dependencies:

@@ -17,7 +17,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@daytona/sdk": "^0.207.0",
     "@fork-fighter/contracts": "workspace:*",
     "@fork-fighter/director-context": "workspace:*",
     "@fork-fighter/game-core": "workspace:*",

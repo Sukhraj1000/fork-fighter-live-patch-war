@@ -9,30 +9,38 @@ and mutation-runtime do not know which provider was selected.
 
 Daytona mode requires:
 
-- `DAYTONA_WORKER_SNAPSHOT`: a prepared snapshot containing the proposal runner
-  and all worker-side tests. Package installation must already be complete.
-- `DAYTONA_PROPOSAL_COMMAND`: the command invoked inside the persistent worker
-  for each patch cycle.
+- `DAYTONA_WORKER_SNAPSHOT`: the prepared issue #9 snapshot containing the
+  pinned Codex CLI, proposal runner, and worker-side tests.
+- `DAYTONA_CODEX_SECRET_NAME`: the name of a Daytona organization secret that
+  is mounted only inside workers as `CODEX_API_KEY`.
 - `DAYTONA_API_KEY` and any standard Daytona SDK configuration, available only
   to the server process.
 
-The adapter creates one sandbox for Architect, Gremlin, and Auditor. On every
-cycle the configured command receives:
+The server creates a `DaytonaGameMasterPool` for each match. Its Architect,
+Gremlin, and Auditor sandboxes are private and persistent across patch cycles.
+They are labeled by match and persona so an existing worker can be reclaimed
+after a server restart.
 
-- `FORK_FIGHTER_PERSONA`: the worker's fixed persona.
-- `FORK_FIGHTER_REQUEST_JSON`: one compact `GameMasterRequest` containing
-  canonical server context, the frozen capability reference, a deadline, and
-  that persona's replayable proposal history.
+For each cycle, the pool writes only these scoped inputs:
 
-The command must print exactly one `MutationProposal` JSON object as its final
-JSON line and exit successfully. Any prose, command-shaped data, mismatched
-request/persona, unsupported capability, nonzero exit, invalid JSON, or missed
-deadline is non-actionable.
+- the frozen proposal JSON schema;
+- one compact `GameMasterRequest` containing canonical server context, the
+  capability reference, deadline, and replayable persona history;
+- a prompt derived from that request.
+
+The installed worker command tests its output and writes one proposal JSON
+file. The host gateway reads only that file and accepts it only when its
+request, persona, capability use, schema, single-submit grant, and deadline all
+match. Arbitrary commands, paths, prose, or extra provider output never reach
+the game.
 
 ## Recovery and cleanup
 
-A failed sandbox is discarded. The next cycle creates a replacement from the
-same snapshot and sends the latest server-owned request, so canonical match
-memory never lives only in Daytona. Server shutdown deletes all retained
-sandboxes. Provider errors are redacted before logs or SSE and do not stop the
+A failed worker is discarded and replaced once within the same deadline. The
+replacement receives the latest server-owned request, so canonical match memory
+never lives only in Daytona. Server shutdown deletes all retained workers.
+Provider errors are redacted before logs or SSE and do not stop the
 authoritative game ticker.
+
+The deterministic mock brains remain the default and do not instantiate the
+Daytona SDK, read Daytona environment variables, or require network access.

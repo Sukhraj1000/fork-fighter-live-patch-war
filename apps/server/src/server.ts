@@ -7,7 +7,7 @@ import Fastify, {
 } from 'fastify'
 
 import { JsonlMatchLogStore } from './jsonl-log.js'
-import { createDaytonaWorkerBrains } from './daytona-agent-brain.js'
+import { createPersistentDaytonaBrains } from './daytona-agent-brain.js'
 import {
   adaptAgentBrains,
   createIntegratedSelector,
@@ -78,14 +78,29 @@ function positiveInteger(
 function defaultAgents(options: MatchServerOptions): MatchHostDependencies['agents'] {
   const provider = options.provider ?? process.env.GAME_MASTER_PROVIDER ?? 'mock'
   if (provider === 'daytona') {
-    const snapshot = process.env.DAYTONA_WORKER_SNAPSHOT
-    const command = process.env.DAYTONA_PROPOSAL_COMMAND
-    if (!snapshot || !command) {
+    const snapshotName = process.env.DAYTONA_WORKER_SNAPSHOT
+    const codexSecretName = process.env.DAYTONA_CODEX_SECRET_NAME
+    if (!snapshotName || !codexSecretName) {
       throw new Error(
-        'Daytona mode requires DAYTONA_WORKER_SNAPSHOT and DAYTONA_PROPOSAL_COMMAND.',
+        'Daytona mode requires DAYTONA_WORKER_SNAPSHOT and DAYTONA_CODEX_SECRET_NAME.',
       )
     }
-    return adaptAgentBrains(createDaytonaWorkerBrains({ snapshot, command }))
+    return adaptAgentBrains(
+      createPersistentDaytonaBrains({
+        snapshotName,
+        codexSecretName,
+        ttlMinutes: positiveInteger(
+          process.env.DAYTONA_WORKER_TTL_MINUTES,
+          30,
+          'DAYTONA_WORKER_TTL_MINUTES',
+        ),
+        startupTimeoutMs: positiveInteger(
+          process.env.DAYTONA_WORKER_STARTUP_TIMEOUT_MS,
+          20_000,
+          'DAYTONA_WORKER_STARTUP_TIMEOUT_MS',
+        ),
+      }),
+    )
   }
   if (provider !== 'mock') {
     throw new Error('GAME_MASTER_PROVIDER must be mock or daytona.')

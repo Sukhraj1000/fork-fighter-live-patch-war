@@ -20,7 +20,7 @@
     "verify": "pnpm run check && pnpm run test:e2e"
   },
   "dependencies": {
-    "@daytona/sdk": "^0.207.0",
+    "@fork-fighter/gm-orchestrator": "workspace:*",
     "dotenv": "^17.4.2"
   },
   "devDependencies": {

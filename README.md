@@ -54,21 +54,28 @@ is the default:
 GAME_MASTER_PROVIDER=mock pnpm play
 ```
 
-The optional Daytona adapter claims one persistent worker per persona from the
-prepared worker snapshot owned by issue #9. It sends compact context through
-an environment variable and expects exactly one proposal JSON object on
-stdout:
+For Daytona mode, create a Daytona API key and an organization secret mounted
+as `CODEX_API_KEY`, then prepare and test the reusable worker snapshot:
 
 ```bash
-GAME_MASTER_PROVIDER=daytona \
-DAYTONA_WORKER_SNAPSHOT=fork-fighter-gm-worker \
-DAYTONA_PROPOSAL_COMMAND='pnpm --silent propose' \
-pnpm play
+cp .env.example .env
+# Add DAYTONA_API_KEY and the provider secret name to .env
+pnpm --filter @fork-fighter/gm-orchestrator prepare:snapshot
+pnpm daytona:smoke
+GAME_MASTER_PROVIDER=daytona pnpm play
 ```
+
+The server uses the issue #9 `DaytonaGameMasterPool` implementation to retain
+one private worker per persona and match. Each cycle writes only the compact
+canonical request and prompt through a scoped gateway, then accepts at most one
+typed proposal file before the deadline. Snapshot preparation installs the
+pinned Codex CLI, proposal runner, and worker tests once; matches never install
+packages in the hot path.
 
 Credentials remain server-side. A worker failure becomes a typed unavailable
 or timeout result; it never blocks the ticker or bypasses validation. See
-[the worker adapter contract](./docs/daytona-worker-adapter.md).
+[the live adapter](./docs/daytona-worker-adapter.md) and
+[agent tool contract](./docs/agent-tool-contract.md).
 
 ## Safety boundary
 
