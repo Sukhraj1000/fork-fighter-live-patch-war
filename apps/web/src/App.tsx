@@ -7,10 +7,11 @@ import {
   subscribeToMatch,
 } from './api/live-match-client'
 import { ArenaCanvas } from './components/ArenaCanvas'
+import { MOCK_RUNS } from './fixtures/mock-game-state'
 import type { EndlessRunResult, EndlessRunStats } from './model/endless-run'
 import type { LiveMatchPayload, MatchStreamEvent } from './model/live-match'
 import { adaptLiveMatch } from './model/live-view-adapter'
-import type { ActivityItem, PatchStatus } from './model/view-models'
+import type { ActivityItem, GameStateViewModel, PatchStatus } from './model/view-models'
 
 const statusCopy: Record<PatchStatus, string> = {
   idle: 'IDLE',
@@ -32,6 +33,57 @@ const emptyStats: EndlessRunStats = {
   timeScore: 0,
   pickupScore: 0,
   score: 0,
+}
+
+function localDemoSnapshot(runId: number): GameStateViewModel {
+  const template = MOCK_RUNS.run
+  return {
+    ...template,
+    runId: `DEMO-${String(runId % 100_000).padStart(5, '0')}`,
+    sector: 'ENDLESS FORKWAY',
+    directors: template.directors.map((director) => ({
+      ...director,
+      status: director.id === 'gremlin' ? 'selected' : 'validated',
+      message: director.id === 'gremlin'
+        ? 'Deploying the next safe obstacle.'
+        : 'Obstacle contract verified.',
+    })),
+    activePatch: {
+      id: `local-bubble-trouble-${runId}`,
+      title: 'BUBBLE TROUBLE',
+      note: 'A typed rolling obstacle is entering your route.',
+      author: 'gremlin',
+      status: 'active',
+      durationSeconds: 8,
+      difficulty: 1.4,
+    },
+    activity: [
+      {
+        id: `local-draft-${runId}`,
+        at: '00:00',
+        author: 'architect',
+        status: 'drafting',
+        title: 'OBSTACLE DRAFTED',
+        detail: 'Architect authored a typed candidate.',
+      },
+      {
+        id: `local-reject-${runId}`,
+        at: '00:01',
+        author: 'auditor',
+        status: 'rejected',
+        title: 'UNFAIR WALL REJECTED',
+        detail: 'The safety gate preserved a playable route.',
+      },
+      {
+        id: `local-active-${runId}`,
+        at: '00:02',
+        author: 'gremlin',
+        status: 'active',
+        title: 'BUBBLE TROUBLE',
+        detail: 'Validated obstacle deployed through the safe runtime.',
+      },
+    ],
+  }
 }
 
 function formatClock(milliseconds: number) {
@@ -140,6 +192,8 @@ function StatusBadge({ status: value }: { status: PatchStatus }) {
 export function App() {
   const [phase, setPhase] = useState<'ready' | 'starting' | 'playing' | 'gameover' | 'error'>('ready')
   const [live, setLive] = useState<LiveMatchPayload>()
+  const [localSnapshot, setLocalSnapshot] = useState<GameStateViewModel>()
+  const [transport, setTransport] = useState<'server' | 'local'>('server')
   const [activity, setActivity] = useState<ActivityItem[]>([])
   const [stats, setStats] = useState<EndlessRunStats>(emptyStats)
   const [result, setResult] = useState<EndlessRunResult>()
@@ -168,12 +222,17 @@ export function App() {
     }
   }, [live?.matchId, appendActivity])
 
-  const snapshot = useMemo(() => (live ? adaptLiveMatch(live, activity) : undefined), [live, activity])
+  const snapshot = useMemo(
+    () => (live ? adaptLiveMatch(live, activity) : localSnapshot),
+    [live, activity, localSnapshot],
+  )
 
   const startRun = async () => {
     const previousMatchId = live?.matchId
     setPhase('starting')
     setError('')
+    setLive(undefined)
+    setLocalSnapshot(undefined)
     setResult(undefined)
     setStats(emptyStats)
     setActivity([{
@@ -189,11 +248,15 @@ export function App() {
     try {
       const created = await createLiveMatch()
       setLive(created)
+      setTransport('server')
       setRunKey((current) => current + 1)
       setPhase('playing')
-    } catch (startError) {
-      setError(startError instanceof Error ? startError.message : 'Could not start the live run.')
-      setPhase('error')
+    } catch {
+      const localRunId = Date.now()
+      setLocalSnapshot(localDemoSnapshot(localRunId))
+      setTransport('local')
+      setRunKey((current) => current + 1)
+      setPhase('playing')
     }
   }
 
@@ -203,7 +266,7 @@ export function App() {
     if (live?.matchId) void endLiveMatch(live.matchId).catch(() => undefined)
   }, [live?.matchId])
 
-  if (!snapshot || !live || (phase !== 'playing' && phase !== 'gameover')) {
+  if (!snapshot || (phase !== 'playing' && phase !== 'gameover')) {
     return (
       <main className="launch-shell">
         <div className="pixel-sky" aria-hidden="true"><i className="star star-1" /><i className="star star-2" /><i className="star star-3" /></div>
@@ -223,6 +286,8 @@ export function App() {
 
   const activeAuthor = snapshot.directors.find((director) => director.id === snapshot.activePatch.author)
   const isGameOver = phase === 'gameover' && result
+  const shellConnected = transport === 'local' || connected
+  const patchIndex = live?.match.patchIndex ?? 0
 
   return (
     <main className="app-shell fixture-run">
@@ -230,12 +295,12 @@ export function App() {
       <header className="topbar pixel-panel">
         <a className="brand" href="#game" aria-label="Fork Fighter home"><span className="brand-fork">FORK</span><span className="brand-slash">/</span><span>FIGHTER</span><small>LIVE PATCH WAR</small></a>
         <div className="pipeline-state" aria-label="Integration pipeline"><span>RUN</span><i>→</i><span>TELEMETRY</span><i>→</i><span>GAME MASTERS</span><i>→</i><span>OBSTACLE</span></div>
-        <div className="run-clock"><span className={`live-dot ${connected ? 'connected' : ''}`} /><small>RUN {snapshot.runId}</small><strong>{formatClock(stats.elapsedMs)}</strong></div>
+        <div className="run-clock"><span className={`live-dot ${shellConnected ? 'connected' : ''}`} /><small>RUN {snapshot.runId}</small><strong>{formatClock(stats.elapsedMs)}</strong></div>
       </header>
 
       <section className="broadcast-grid" id="game">
         <section className="game-frame pixel-panel">
-          <div className="frame-titlebar"><span><i className="flag-pixel" /> ENDLESS FORKWAY</span><span data-testid="run-status">{isGameOver ? 'GAME OVER' : `RUNNING // WAVE ${String(live.match.patchIndex + 1).padStart(2, '0')}`}</span></div>
+          <div className="frame-titlebar"><span><i className="flag-pixel" /> ENDLESS FORKWAY</span><span data-testid="run-status">{isGameOver ? 'GAME OVER' : `RUNNING // WAVE ${String(patchIndex + 1).padStart(2, '0')}`}</span></div>
           <div className="game-screen">
             <ArenaCanvas
               key={runKey}
@@ -285,7 +350,7 @@ export function App() {
           </ol>
         </aside>
       </section>
-      <footer className="page-footer"><span>TYPED OBSTACLES ONLY</span><span className="shell-safe"><i /> GAME SHELL {connected ? 'LIVE' : 'RECONNECTING'}</span><span>LONG-RUNNING DAYTONA GAME MASTERS</span></footer>
+      <footer className="page-footer"><span>TYPED OBSTACLES ONLY</span><span className="shell-safe"><i /> GAME SHELL {transport === 'local' ? 'FAILSAFE' : connected ? 'LIVE' : 'RECONNECTING'}</span><span>{transport === 'local' ? 'LOCAL DEMO FALLBACK' : 'LONG-RUNNING DAYTONA GAME MASTERS'}</span></footer>
     </main>
   )
 }

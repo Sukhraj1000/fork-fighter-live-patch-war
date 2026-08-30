@@ -7,6 +7,11 @@ the traps the Game Masters deploy in real time. One hit ends the run.
 The default path is completely local: it uses deterministic mock game masters
 and does not require Daytona, provider credentials, or network success.
 
+For a split production deployment, set `VITE_API_BASE_URL` while building the
+web app to the public Fastify server URL, and set `CLIENT_ORIGIN` on that server
+to the web app origin. If the deployed API is unavailable, the public client
+uses its typed local demo fallback instead of blocking the game.
+
 ## Play locally
 
 Prerequisites: Node.js 20.6 or newer and pnpm 10.

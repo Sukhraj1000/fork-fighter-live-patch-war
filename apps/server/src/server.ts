@@ -169,6 +169,23 @@ export function createMatchServer(options: MatchServerOptions = {}): MatchServer
     logger: false,
     ...options.fastify,
   })
+  const configuredOrigins = (process.env.CLIENT_ORIGIN ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+  if (configuredOrigins.length > 0) {
+    app.addHook('onRequest', async (request, reply) => {
+      const requestOrigin = request.headers.origin
+      const allowsAll = configuredOrigins.includes('*')
+      if (requestOrigin && (allowsAll || configuredOrigins.includes(requestOrigin))) {
+        reply.header('Access-Control-Allow-Origin', allowsAll ? '*' : requestOrigin)
+        reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+        reply.header('Access-Control-Allow-Headers', 'Content-Type,Last-Event-ID')
+        reply.header('Vary', 'Origin')
+      }
+      if (request.method === 'OPTIONS') return reply.code(204).send()
+    })
+  }
   const gameStates = new LiveGameStateStore()
   const dependencies = resolveDependencies(options, gameStates)
   const host = new MatchHost(dependencies)

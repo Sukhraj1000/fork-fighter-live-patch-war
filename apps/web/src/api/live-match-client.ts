@@ -4,6 +4,12 @@ import type {
   MatchStreamEvent,
 } from '../model/live-match'
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+
+function apiUrl(path: string): string {
+  return `${apiBaseUrl}${path}`
+}
+
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -20,7 +26,7 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export async function createLiveMatch(): Promise<LiveMatchPayload> {
-  const response = await jsonRequest<{ live: LiveMatchPayload }>('/api/live-matches', {
+  const response = await jsonRequest<{ live: LiveMatchPayload }>(apiUrl('/api/live-matches'), {
     method: 'POST',
     body: '{}',
   })
@@ -29,13 +35,13 @@ export async function createLiveMatch(): Promise<LiveMatchPayload> {
 
 export async function getLiveMatch(matchId: string): Promise<LiveMatchPayload> {
   const response = await jsonRequest<{ live: LiveMatchPayload }>(
-    `/api/live-matches/${encodeURIComponent(matchId)}`,
+    apiUrl(`/api/live-matches/${encodeURIComponent(matchId)}`),
   )
   return response.live
 }
 
 export async function endLiveMatch(matchId: string): Promise<void> {
-  await jsonRequest(`/api/live-matches/${encodeURIComponent(matchId)}/end`, {
+  await jsonRequest(apiUrl(`/api/live-matches/${encodeURIComponent(matchId)}/end`), {
     method: 'POST',
     body: '{}',
   })
@@ -45,7 +51,7 @@ export async function sendPlayerCommand(
   matchId: string,
   command: PlayerCommand,
 ): Promise<void> {
-  await jsonRequest(`/api/live-matches/${encodeURIComponent(matchId)}/commands`, {
+  await jsonRequest(apiUrl(`/api/live-matches/${encodeURIComponent(matchId)}/commands`), {
     method: 'POST',
     body: JSON.stringify(command),
   })
@@ -71,7 +77,7 @@ export function subscribeToMatch(
   onEvent: (event: MatchStreamEvent) => void,
   onConnectionChange: (connected: boolean) => void,
 ): () => void {
-  const source = new EventSource(`/api/matches/${encodeURIComponent(matchId)}/events`)
+  const source = new EventSource(apiUrl(`/api/matches/${encodeURIComponent(matchId)}/events`))
   const listeners = MATCH_EVENT_TYPES.map((type) => {
     const listener = (event: Event) => {
       const message = event as MessageEvent<string>

@@ -34,3 +34,22 @@ test('proposal work leaves the live game responsive', async ({ request }) => {
 
   expect(afterTick).toBeGreaterThan(beforeTick)
 })
+
+test('keeps the deployed demo playable when the API route is absent', async ({
+  page,
+}) => {
+  await page.route('**/api/live-matches', async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: 'text/html',
+      body: '<!doctype html><title>Not found</title>',
+    })
+  })
+  await page.goto('/')
+  await page.getByTestId('start-run').click()
+
+  await expect(page.getByTestId('run-status')).toContainText('RUNNING')
+  await expect(page.getByTestId('patch-card')).toHaveAttribute('data-status', 'active')
+  await expect(page.getByText('LOCAL DEMO FALLBACK')).toBeVisible()
+  await expect(page.getByTestId('game-over')).toBeVisible({ timeout: 12_000 })
+})
