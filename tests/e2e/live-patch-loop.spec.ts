@@ -50,6 +50,10 @@ test('keeps the deployed demo playable when the API route is absent', async ({
 
   await expect(page.getByTestId('run-status')).toContainText('RUNNING')
   await expect(page.getByTestId('patch-card')).toHaveAttribute('data-status', 'active')
+  await expect(page.getByTestId('patch-card')).toContainText('BUBBLE TROUBLE')
   await expect(page.getByText('LOCAL DEMO FALLBACK')).toBeVisible()
+  await expect(page.getByTestId('patch-card')).toContainText('SKYLINE SHOVE', {
+    timeout: 5_000,
+  })
   await expect(page.getByTestId('game-over')).toBeVisible({ timeout: 12_000 })
 })

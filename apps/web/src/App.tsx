@@ -35,6 +35,24 @@ const emptyStats: EndlessRunStats = {
   score: 0,
 }
 
+const localPatchCycle = [
+  {
+    author: 'gremlin',
+    title: 'BUBBLE TROUBLE',
+    note: 'A typed rolling obstacle is entering your route.',
+  },
+  {
+    author: 'architect',
+    title: 'SKYLINE SHOVE',
+    note: 'A moving wall is forcing a tighter jump window.',
+  },
+  {
+    author: 'auditor',
+    title: 'SPIKE AUDIT',
+    note: 'A validated spike row is cutting off the safe line.',
+  },
+] as const
+
 function localDemoSnapshot(runId: number): GameStateViewModel {
   const template = MOCK_RUNS.run
   return {
@@ -50,9 +68,7 @@ function localDemoSnapshot(runId: number): GameStateViewModel {
     })),
     activePatch: {
       id: `local-bubble-trouble-${runId}`,
-      title: 'BUBBLE TROUBLE',
-      note: 'A typed rolling obstacle is entering your route.',
-      author: 'gremlin',
+      ...localPatchCycle[0],
       status: 'active',
       durationSeconds: 8,
       difficulty: 1.4,
@@ -227,6 +243,50 @@ export function App() {
     [live, activity, localSnapshot],
   )
 
+  useEffect(() => {
+    if (transport !== 'local' || phase !== 'playing') return
+    const timer = window.setInterval(() => {
+      setLocalSnapshot((current) => {
+        if (!current) return current
+        const currentIndex = localPatchCycle.findIndex(
+          (patch) => patch.author === current.activePatch.author,
+        )
+        const next = localPatchCycle[(currentIndex + 1) % localPatchCycle.length]
+        const changedAt = Date.now()
+        const nextActivity: ActivityItem = {
+          id: `local-active-${changedAt}`,
+          at: formatClock(changedAt % 3_600_000),
+          author: next.author,
+          status: 'active',
+          title: next.title,
+          detail: 'New typed obstacle deployed during live play.',
+        }
+        return {
+          ...current,
+          directors: current.directors.map((director) => ({
+            ...director,
+            status: director.id === next.author ? 'selected' : 'drafting',
+            message: director.id === next.author
+              ? `Deploying ${next.title}.`
+              : 'Authoring the next typed obstacle.',
+          })),
+          activePatch: {
+            id: `local-${next.author}-${changedAt}`,
+            ...next,
+            status: 'active',
+            durationSeconds: 6,
+            difficulty: 1.6,
+          },
+          activity: [
+            ...current.activity,
+            nextActivity,
+          ].slice(-10),
+        }
+      })
+    }, 2_500)
+    return () => window.clearInterval(timer)
+  }, [phase, transport])
+
   const startRun = async () => {
     const previousMatchId = live?.matchId
     setPhase('starting')
@@ -278,7 +338,7 @@ export function App() {
             {phase === 'starting' ? 'STARTING RUN…' : phase === 'error' ? 'TRY AGAIN' : 'START LIVE RUN'}
           </button>
           {error && <p className="launch-error" role="alert">{error}</p>}
-          <footer>SPACE / W / ↑ TO JUMP // ONE HIT = GAME OVER // HIGHEST SCORE WINS</footer>
+          <footer>SPACE / W / ↑ / TAP TO JUMP // ONE HIT = GAME OVER // HIGHEST SCORE WINS</footer>
         </section>
       </main>
     )
@@ -328,7 +388,7 @@ export function App() {
             )}
           </div>
           <footer className="game-footer endless-footer">
-            <div className="control-hint"><kbd>SPACE</kbd><kbd>W</kbd><kbd>↑</kbd><span>JUMP</span></div>
+            <div className="control-hint"><kbd className="tap-key">TAP</kbd><kbd className="keyboard-key">SPACE</kbd><kbd className="keyboard-key">W</kbd><kbd className="keyboard-key">↑</kbd><span>JUMP</span></div>
             <div className="command-stream"><i /> AUTO-RUN: {isGameOver ? 'STOPPED' : 'FULL SPEED'}</div>
             <div className={`dash-state ${stats.alive ? 'ready' : ''}`}>ONE HIT = DEATH</div>
           </footer>
