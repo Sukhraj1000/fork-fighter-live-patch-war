@@ -185,6 +185,49 @@ function activityFromStream(event: MatchStreamEvent): ActivityItem[] {
     detail,
   })
 
+  if (event.type === 'match_created') {
+    return [item(
+      'match',
+      'system',
+      'validated',
+      'LIVE MATCH CONNECTED',
+      'Server-owned game loop and event stream are online.',
+    )]
+  }
+  if (event.type === 'match_ended') {
+    return [item(
+      'ended',
+      'system',
+      'expired',
+      'MATCH CLOSED CLEANLY',
+      'Workers and active mutation state were released.',
+    )]
+  }
+  if (event.type === 'patch_cycle_started') {
+    const patchIndex = typeof data.patchIndex === 'number' ? data.patchIndex : undefined
+    return [item(
+      'cycle',
+      'system',
+      'drafting',
+      patchIndex === undefined
+        ? '3 AGENTS DISPATCHED'
+        : `WAVE ${String(patchIndex).padStart(2, '0')} · 3 AGENTS DISPATCHED`,
+      'Architect, Gremlin, and Auditor are drafting typed obstacles in parallel.',
+    )]
+  }
+  if (event.type === 'patch_cycle_skipped') {
+    const reason = data.reason === 'proposal_round_in_flight'
+      ? 'The previous proposal round is still running.'
+      : 'No safe typed proposal was ready; the game continued unchanged.'
+    return [item(
+      'cycle-skipped',
+      'system',
+      'expired',
+      'WAVE CONTINUED SAFELY',
+      reason,
+    )]
+  }
+
   if (event.type === 'agent_status') {
     const itemStatus = status(data.status)
     if (!['drafting', 'failed'].includes(itemStatus)) return []
@@ -215,6 +258,30 @@ function activityFromStream(event: MatchStreamEvent): ActivityItem[] {
   }
   if (event.type === 'proposal_selected') {
     return [item('selected', persona(data.author), 'selected', 'OBSTACLE SELECTED', typeof data.mutationId === 'string' ? data.mutationId : 'Best valid challenge fit.')]
+  }
+  if (event.type === 'proposal_expired') {
+    return [item(
+      'proposal-expired',
+      persona(data.author),
+      'expired',
+      'VALID PROPOSAL NOT CHOSEN',
+      typeof data.note === 'string'
+        ? data.note
+        : 'The referee selected a stronger candidate for this wave.',
+    )]
+  }
+  if (event.type === 'patch_scheduled') {
+    const proposal = record(data.proposal)
+    const mutation = record(proposal?.mutation)
+    return [item(
+      'scheduled',
+      persona(proposal?.author),
+      'incoming',
+      'OBSTACLE QUEUED',
+      typeof mutation?.title === 'string'
+        ? `${mutation.title} will deploy at the next safe boundary.`
+        : 'The selected patch is waiting for the next safe boundary.',
+    )]
   }
   if (event.type === 'patch_activated') {
     const mutation = record(data.mutation)
@@ -262,14 +329,30 @@ export function App() {
     if (items.length === 0) return
     setActivity((current) => {
       const byId = new Map([...current, ...items].map((entry) => [entry.id, entry]))
-      return [...byId.values()].slice(-10)
+      return [...byId.values()].slice(-20)
     })
   }, [])
 
   useEffect(() => {
     if (!live?.matchId) return
     const matchId = live.matchId
-    const unsubscribe = subscribeToMatch(matchId, (event) => appendActivity(activityFromStream(event)), setConnected)
+    const unsubscribe = subscribeToMatch(
+      matchId,
+      (event) => appendActivity(activityFromStream(event)),
+      (isConnected) => {
+        setConnected(isConnected)
+        if (isConnected) {
+          appendActivity([{
+            id: `${matchId}-stream-connected`,
+            at: formatClock(Date.now() % 3_600_000),
+            author: 'system',
+            status: 'validated',
+            title: 'EVENT STREAM CONNECTED',
+            detail: 'Live server events are flowing into this right-hand system log.',
+          }])
+        }
+      },
+    )
     const poll = window.setInterval(() => {
       void getLiveMatch(matchId).then(setLive).catch(() => setConnected(false))
     }, 200)
@@ -321,7 +404,7 @@ export function App() {
           activity: [
             ...current.activity,
             nextActivity,
-          ].slice(-10),
+          ].slice(-20),
         }
       })
     }, 2_500)
@@ -355,6 +438,14 @@ export function App() {
       setLive(created)
       setTransport('server')
       setProvider(runtime.provider)
+      appendActivity([{
+        id: `${created.matchId}-runtime-connected`,
+        at: '00:00',
+        author: 'system',
+        status: 'validated',
+        title: 'RUNTIME CHECK PASSED',
+        detail: `${runtime.parallelGameMasters} ${runtime.provider.toUpperCase()} game masters connected; validator and safe runtime ready.`,
+      }])
       setRunKey((current) => current + 1)
       setPhase('playing')
     } catch {
@@ -478,9 +569,21 @@ export function App() {
           <section className="director-stack" aria-label="Game master statuses">
             {snapshot.directors.map((director) => <div className="director-row" key={director.id} data-testid={`agent-${director.id}`} data-status={director.status}><span style={{ background: director.accent }} /><b>{director.name}</b><StatusBadge status={director.status} /></div>)}
           </section>
-          <ol className="activity-feed" data-testid="activity-feed">
-            {snapshot.activity.slice().reverse().map((entry) => <li key={entry.id} data-status={entry.status} data-testid={`activity-${entry.status}`}><small>{entry.at} // {entry.author.toUpperCase()}</small><strong>{entry.title}</strong><span>{entry.detail}</span></li>)}
-          </ol>
+          <section className="system-log" data-testid="system-log" aria-label="Live system log">
+            <header className="system-log-header">
+              <div><small>RIGHT-HAND PROOF FEED</small><strong data-testid="system-log-title">LIVE SYSTEM LOG</strong></div>
+              <span className={`system-log-status ${shellConnected ? 'online' : ''}`} data-testid="system-log-status"><i />{transport === 'local' ? 'FAILSAFE LIVE' : connected ? 'STREAM LIVE' : 'RECONNECTING'}</span>
+            </header>
+            <div className="system-log-health" aria-label="Live subsystem status">
+              <span><i />GAME LOOP</span>
+              <span><i />VALIDATOR</span>
+              <span data-testid="system-log-provider"><i />{provider.toUpperCase()} // {snapshot.directors.length} AGENTS</span>
+            </div>
+            <div className="system-log-meta" data-testid="system-log-event-count">{String(snapshot.activity.length).padStart(2, '0')} EVENTS // NEWEST FIRST</div>
+            <ol className="activity-feed" data-testid="activity-feed" aria-live="polite" aria-relevant="additions text">
+              {snapshot.activity.slice().reverse().map((entry, index) => <li key={entry.id} data-status={entry.status} data-testid={`activity-${entry.status}`}><small><b>#{String(snapshot.activity.length - index).padStart(2, '0')}</b>{entry.at} // {entry.author.toUpperCase()}</small><strong>{entry.title}</strong><span>{entry.detail}</span></li>)}
+            </ol>
+          </section>
         </aside>
       </section>
       <footer className="page-footer"><span>{seededDemo ? 'SEEDED DEMO // ' : ''}TYPED OBSTACLES ONLY</span><span className="shell-safe"><i /> GAME SHELL {transport === 'local' ? 'FAILSAFE' : connected ? 'LIVE' : 'RECONNECTING'}</span><span>{provider === 'daytona' ? 'DAYTONA // 3 PARALLEL CODEX WORKERS' : provider === 'mock' ? 'LOCAL MOCK GAME MASTERS' : 'LOCAL DEMO FALLBACK'}</span></footer>

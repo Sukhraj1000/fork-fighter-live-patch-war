@@ -93,6 +93,10 @@ export async function sendRunnerTelemetry(
 
 const MATCH_EVENT_TYPES = [
   'snapshot',
+  'match_created',
+  'match_ended',
+  'patch_cycle_started',
+  'patch_cycle_skipped',
   'agent_status',
   'proposal_received',
   'proposal_failed',

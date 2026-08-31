@@ -49,6 +49,11 @@ test('seeded demo always shows a rejected candidate and an accepted live patch',
 
   await expect(page.getByTestId('activity-rejected').first()).toBeVisible()
   await expect(page.getByTestId('activity-selected').first()).toBeVisible()
+  await expect(page.getByTestId('system-log')).toBeVisible()
+  await expect(page.getByTestId('system-log-title')).toHaveText('LIVE SYSTEM LOG')
+  await expect(page.getByTestId('system-log-status')).toHaveText('STREAM LIVE')
+  await expect(page.getByTestId('system-log-provider')).toContainText('MOCK // 3 AGENTS')
+  await expect(page.getByTestId('system-log-event-count')).toContainText('EVENTS')
   await expect(page.getByTestId('patch-card')).toHaveAttribute('data-status', 'incoming')
   await expect(page.getByTestId('patch-card')).toHaveAttribute('data-status', 'active', {
     timeout: 7_000,
