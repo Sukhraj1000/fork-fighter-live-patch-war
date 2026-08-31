@@ -231,6 +231,9 @@ button { color: inherit; }
 .executor-countdown { margin-top: 13px; display: flex; align-items: baseline; justify-content: space-between; color: #7d89b4; font-size: 5px; }
 .executor-countdown b { color: var(--gold); font-size: 12px; }
 .patch-note { margin: 10px 0 0; color: #9faad2; font-size: 6px; line-height: 1.7; }
+.demand-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.demand-list span { padding: 5px 6px; border: 2px solid #44517e; background: #0a1230; color: var(--cream); font-size: 5px; line-height: 1.35; text-transform: uppercase; }
+.referee-stamp { margin-top: 10px; padding: 7px; border: 2px solid var(--mint); background: rgba(94, 231, 183, 0.08); color: var(--mint); font-size: 5px; line-height: 1.4; text-align: center; }
 .animation-slot { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; opacity: .34; }
 .animation-slot i { width: 5px; height: 5px; background: #7480a7; }
 
@@ -311,7 +314,7 @@ button { color: inherit; }
   .executor-card { min-height: 0; display: grid; grid-template-columns: 126px 1fr; gap: 0 12px; }
   .executor-portrait { grid-row: 1 / 6; }
   .executor-copy { margin-top: 0; }
-  .execution-rule, .change-label, .executor-card h3, .executor-countdown { grid-column: 2; }
+  .execution-rule, .change-label, .executor-card h3, .executor-countdown, .demand-list, .referee-stamp { grid-column: 2; }
   .page-footer { justify-content: center; text-align: center; }
   .page-footer span:not(.shell-safe) { display: none; }
 }

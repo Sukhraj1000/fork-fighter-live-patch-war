@@ -908,6 +908,15 @@ export class MatchHost {
     state.outcomes = state.outcomes.slice(-12)
     state.context = MatchDirectorContextSchema.parse({
       ...state.context,
+      remainingDifficultyBudget: Math.min(
+        20,
+        Number(
+          (
+            state.context.remainingDifficultyBudget +
+            active.proposal.mutation.difficultyCost
+          ).toFixed(2),
+        ),
+      ),
       telemetry: {
         ...state.context.telemetry,
         activeMutationIds: [...state.activePatches.keys()],

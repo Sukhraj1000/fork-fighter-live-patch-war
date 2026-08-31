@@ -22,6 +22,15 @@ type SimulatedRules = {
   damageTakenMultiplier: number
 }
 
+type SimulatedRunnerRules = {
+  gravityMode: 'normal' | 'moon' | 'inverted' | 'zero_g'
+  jumpMultiplier: number
+  speedMultiplier: number
+  scaleMultiplier: number
+  rotationMode: 'upright' | 'flipped' | 'spin'
+  worldStyle: 'normal' | 'neon' | 'void' | 'sunset'
+}
+
 function simulationReason(
   code: string,
   message: string,
@@ -86,6 +95,15 @@ export function runDeterministicMicroSimulation(
     damageTakenMultiplier: 1,
   }
   const rules: SimulatedRules = { ...baselineRules }
+  const baselineRunnerRules: SimulatedRunnerRules = {
+    gravityMode: 'normal',
+    jumpMultiplier: 1,
+    speedMultiplier: 1,
+    scaleMultiplier: 1,
+    rotationMode: 'upright',
+    worldStyle: 'normal',
+  }
+  const runnerRules: SimulatedRunnerRules = { ...baselineRunnerRules }
   const baselineRequirement = input.gameState.extraction.requiredBankedCores
   let extractionRequirement = baselineRequirement
   const spawnedByTag = new Map<string, number>()
@@ -94,6 +112,7 @@ export function runDeterministicMicroSimulation(
     Map<keyof SimulatedRules | 'extractionRequirement', number>
   >()
   const relocatedTags = new Set<string>()
+  const runnerRuleSnapshots = new Map<string, SimulatedRunnerRules>()
   const reasons: ValidationReason[] = []
   let entitiesSpawned = 0
   const schedule = scheduleActivations(input)
@@ -115,7 +134,8 @@ export function runDeterministicMicroSimulation(
     for (const effect of trigger.effects) {
       switch (effect.type) {
         case 'spawnCollector':
-        case 'spawnBonusCore': {
+        case 'spawnBonusCore':
+        case 'spawnRunnerHazard': {
           const current = spawnedByTag.get(effect.tag) ?? 0
           spawnedByTag.set(effect.tag, current + effect.count)
           entitiesSpawned += effect.count
@@ -171,6 +191,17 @@ export function runDeterministicMicroSimulation(
             )
           }
           break
+        case 'configureRunner':
+          if (!runnerRuleSnapshots.has(effect.tag)) {
+            runnerRuleSnapshots.set(effect.tag, { ...runnerRules })
+          }
+          runnerRules.gravityMode = effect.gravityMode
+          runnerRules.jumpMultiplier = effect.jumpMultiplier
+          runnerRules.speedMultiplier = effect.speedMultiplier
+          runnerRules.scaleMultiplier = effect.scaleMultiplier
+          runnerRules.rotationMode = effect.rotationMode
+          runnerRules.worldStyle = effect.worldStyle
+          break
       }
     }
   }
@@ -195,6 +226,11 @@ export function runDeterministicMicroSimulation(
             else rules[name] = value
           }
           ruleSnapshots.delete(cleanup.tag)
+        }
+        const runnerSnapshot = runnerRuleSnapshots.get(cleanup.tag)
+        if (runnerSnapshot) {
+          Object.assign(runnerRules, runnerSnapshot)
+          runnerRuleSnapshots.delete(cleanup.tag)
         }
         break
       }
@@ -223,8 +259,10 @@ export function runDeterministicMicroSimulation(
   }
   if (
     stableSerialize(rules) !== stableSerialize(baselineRules) ||
+    stableSerialize(runnerRules) !== stableSerialize(baselineRunnerRules) ||
     extractionRequirement !== baselineRequirement ||
-    ruleSnapshots.size !== 0
+    ruleSnapshots.size !== 0 ||
+    runnerRuleSnapshots.size !== 0
   ) {
     reasons.push(
       simulationReason(
@@ -244,6 +282,7 @@ export function runDeterministicMicroSimulation(
     entitiesCleaned,
     retainedEntities,
     rules,
+    runnerRules,
     extractionRequirement,
     relocatedTags: [...relocatedTags].sort(),
     reasonCodes: distinctReasons.map(({ code }) => code),

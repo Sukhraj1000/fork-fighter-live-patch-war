@@ -16,6 +16,7 @@ import {
   canonicalMockEventBatch,
   canonicalMockGameState,
   debtCollectorMutationFixture,
+  upsideDownForkStormMutationFixture,
   type MutationDefinition,
   type PlayerCommand,
 } from '../src/index.js'
@@ -45,6 +46,18 @@ describe('canonical fixtures', () => {
       debtCollectorMutationFixture,
     )
     expect(mutation.id).toBe('debt-collector')
+  })
+
+  it('parses a reversible runner-physics and hazard mutation', () => {
+    const mutation: MutationDefinition = MutationDefinitionSchema.parse(
+      upsideDownForkStormMutationFixture,
+    )
+    expect(mutation.triggers.map(({ type }) => type)).toEqual([
+      'onActivation',
+      'onInterval',
+    ])
+    expect(MUTATION_CAPABILITIES.effects).toContain('configureRunner')
+    expect(MUTATION_CAPABILITIES.effects).toContain('spawnRunnerHazard')
   })
 })
 
@@ -111,6 +124,18 @@ describe('mutation boundary', () => {
       }),
     )
     expect(result.success).toBe(false)
+  })
+
+  it('rejects untelegraphed or unbounded runner hazards', () => {
+    const unsafe = structuredClone(
+      upsideDownForkStormMutationFixture,
+    ) as unknown as {
+      triggers: Array<{ effects: Array<Record<string, unknown>> }>
+    }
+    unsafe.triggers[1]!.effects[0]!.telegraphMs = 0
+    unsafe.triggers[1]!.effects[0]!.count = 99
+
+    expect(MutationDefinitionSchema.safeParse(unsafe).success).toBe(false)
   })
 })
 

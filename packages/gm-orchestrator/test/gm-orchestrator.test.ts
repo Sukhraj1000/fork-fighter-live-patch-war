@@ -8,6 +8,7 @@ import {
   ProposalResultSchema,
   type GameMasterPersona,
   type MatchDirectorContext,
+  type MutationProposal,
   type ProposalHistoryEntry,
 } from '@fork-fighter/contracts'
 
@@ -17,6 +18,7 @@ import {
   ArchitectMockBrain,
   createDeterministicMockBrains,
   createGameMasterRequests,
+  createGremlinMockProposal,
   proposeConcurrently,
   runAgentBrain,
   type AgentBrain,
@@ -172,7 +174,7 @@ describe('deterministic mock proposal cycle', () => {
     assert.deepEqual(new Set(started), new Set(GAME_MASTER_PERSONAS))
 
     const results = await pending
-    const proposals = GAME_MASTER_PERSONAS.map((persona) => {
+    const proposals: MutationProposal[] = GAME_MASTER_PERSONAS.map((persona) => {
       const result = results[persona]
       assert.doesNotThrow(() => ProposalResultSchema.parse(result))
       assert.equal(result.status, 'proposed')
@@ -189,8 +191,21 @@ describe('deterministic mock proposal cycle', () => {
     assert.equal(proposals.length, 3)
     assert.equal(new Set(proposals.map(({ proposalId }) => proposalId)).size, 3)
     assert.deepEqual(
-      proposals.map(({ mutation }) => mutation.triggers[0]?.effects[0]?.type),
-      ['spawnBonusCore', 'relocateHazard', 'modifyRule'],
+      proposals.map(({ mutation }) =>
+        mutation.triggers.flatMap(({ effects }) => effects.map(({ type }) => type)),
+      ),
+      [
+        ['configureRunner', 'spawnRunnerHazard'],
+        ['configureRunner', 'spawnRunnerHazard'],
+        ['configureRunner'],
+      ],
+    )
+    assert.deepEqual(
+      proposals.map(({ mutation }) => {
+        const effect = mutation.triggers[0]?.effects[0]
+        return effect?.type === 'configureRunner' ? effect.gravityMode : undefined
+      }),
+      ['moon', 'inverted', 'normal'],
     )
 
     const forbiddenKeys = new Set([
@@ -215,6 +230,32 @@ describe('deterministic mock proposal cycle', () => {
     const brain = new ArchitectMockBrain()
 
     assert.deepEqual(await brain.propose(request), await brain.propose(request))
+  })
+
+  it('alternates Gremlin into a zero-gravity anvil demand on even cycles', () => {
+    const base = requests().gremlin
+    const request = GameMasterRequestSchema.parse({
+      ...base,
+      requestId: 'request-zero-gravity-gremlin',
+      context: {
+        ...base.context,
+        patchIndex: 4,
+        telemetry: { ...base.context.telemetry, patchIndex: 4 },
+      },
+    })
+    const proposal = createGremlinMockProposal(request)
+    const effects = proposal.mutation.triggers.flatMap(({ effects }) => effects)
+    const configuration = effects.find(({ type }) => type === 'configureRunner')
+    const hazard = effects.find(({ type }) => type === 'spawnRunnerHazard')
+
+    assert.equal(
+      configuration?.type === 'configureRunner' ? configuration.gravityMode : undefined,
+      'zero_g',
+    )
+    assert.equal(
+      hazard?.type === 'spawnRunnerHazard' ? hazard.hazard : undefined,
+      'falling_anvil',
+    )
   })
 })
 

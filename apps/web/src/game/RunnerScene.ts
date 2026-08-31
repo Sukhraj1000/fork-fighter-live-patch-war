@@ -1,12 +1,20 @@
 import Phaser from 'phaser'
-import type { GameMasterPersona } from '@fork-fighter/contracts'
+import type {
+  ConfigureRunnerEffect,
+  GameMasterPersona,
+  SpawnRunnerHazardEffect,
+} from '@fork-fighter/contracts'
 import type {
   EndlessRunCallbacks,
   EndlessRunStats,
   ObstacleKind,
   ObstaclePatch,
+  RunnerMutationPatch,
 } from '../model/endless-run'
-import { obstaclePatchFromView } from '../model/endless-run'
+import {
+  obstaclePatchFromWave,
+  runnerMutationPatchFromView,
+} from '../model/endless-run'
 import type { GameStateViewModel } from '../model/view-models'
 
 const WIDTH = 960
@@ -14,9 +22,11 @@ const HEIGHT = 540
 const GROUND_Y = 418
 const PLAYER_X = 148
 const PLAYER_GROUND_Y = GROUND_Y - 42
+const PLAYER_CEILING_Y = 92
 const GRAVITY = 2_050
 const JUMP_VELOCITY = -770
 const START_GRACE_MS = 1_800
+const COLLISION_TUTORIAL_MS = 25_000
 const JUMP_BUFFER_MS = 150
 const RUNNER_ACTION_TEXTURE = 'fork-fighter-runner'
 const RUNNER_RUN_TEXTURE = 'fork-fighter-run-cycle'
@@ -54,6 +64,8 @@ type MovingObstacle = {
   title: string
   phase: number
   baseY: number
+  speedMultiplier: number
+  sourceMutationId: string
 }
 
 type MovingPickup = {
@@ -69,6 +81,17 @@ type RunnerKeys = {
 
 type PlayerMotion = 'run' | 'jump' | 'hit'
 
+type RunnerConfiguration = Omit<ConfigureRunnerEffect, 'type' | 'tag'>
+
+const DEFAULT_RUNNER_CONFIGURATION: RunnerConfiguration = {
+  gravityMode: 'normal',
+  jumpMultiplier: 1,
+  speedMultiplier: 1,
+  scaleMultiplier: 1,
+  rotationMode: 'upright',
+  worldStyle: 'normal',
+}
+
 export class RunnerScene extends Phaser.Scene {
   private snapshot: GameStateViewModel
   private readonly callbacks: EndlessRunCallbacks
@@ -80,6 +103,14 @@ export class RunnerScene extends Phaser.Scene {
   private obstacles: MovingObstacle[] = []
   private pickups: MovingPickup[] = []
   private seenPatchIds = new Set<string>()
+  private activeRunnerMutation?: RunnerMutationPatch
+  private mutationTimers: Phaser.Time.TimerEvent[] = []
+  private runnerConfiguration: RunnerConfiguration = {
+    ...DEFAULT_RUNNER_CONFIGURATION,
+  }
+  private mutationOverlay?: Phaser.GameObjects.Rectangle
+  private suppressBaselineSpawns = false
+  private collisionGraceMs = COLLISION_TUTORIAL_MS
   private elapsedMs = 0
   private pickupCount = 0
   private velocityY = 0
@@ -121,7 +152,7 @@ export class RunnerScene extends Phaser.Scene {
     this.bindControls()
     this.showStartSignal()
     this.emitStats()
-    this.maybeQueuePatch(this.snapshot)
+    this.reconcilePatch(this.snapshot)
   }
 
   update(_time: number, delta: number) {
@@ -134,6 +165,7 @@ export class RunnerScene extends Phaser.Scene {
       return
     }
     this.elapsedMs += frameMs
+    this.collisionGraceMs = Math.max(0, this.collisionGraceMs - frameMs)
     this.updateBackdrop(frameMs)
     this.updatePlayer(frameMs)
     this.updateSpawns(frameMs)
@@ -146,7 +178,7 @@ export class RunnerScene extends Phaser.Scene {
 
   applySnapshot(snapshot: GameStateViewModel) {
     this.snapshot = snapshot
-    if (this.sys.isActive()) this.maybeQueuePatch(snapshot)
+    if (this.sys.isActive()) this.reconcilePatch(snapshot)
   }
 
   private bindControls() {
@@ -163,7 +195,11 @@ export class RunnerScene extends Phaser.Scene {
 
   private updatePlayer(deltaMs: number) {
     if (!this.player) return
-    const grounded = this.player.y >= PLAYER_GROUND_Y - 1
+    const mode = this.runnerConfiguration.gravityMode
+    const grounded =
+      mode === 'inverted'
+        ? this.player.y <= PLAYER_CEILING_Y + 1
+        : mode !== 'zero_g' && this.player.y >= PLAYER_GROUND_Y - 1
     const wantsKeyboardJump = this.keys && (
       Phaser.Input.Keyboard.JustDown(this.keys.jump) ||
       Phaser.Input.Keyboard.JustDown(this.keys.up) ||
@@ -174,21 +210,43 @@ export class RunnerScene extends Phaser.Scene {
     if (wantsJump) this.jumpBufferMs = JUMP_BUFFER_MS
     else this.jumpBufferMs = Math.max(0, this.jumpBufferMs - deltaMs)
 
-    if (grounded && this.jumpBufferMs > 0) {
+    if (mode === 'zero_g' && this.jumpBufferMs > 0) {
       this.jumpBufferMs = 0
-      this.velocityY = JUMP_VELOCITY
+      this.velocityY = -440 * this.runnerConfiguration.jumpMultiplier
+      this.setPlayerMotion('jump')
+    } else if (grounded && this.jumpBufferMs > 0) {
+      this.jumpBufferMs = 0
+      const direction = mode === 'inverted' ? -1 : 1
+      this.velocityY = JUMP_VELOCITY * this.runnerConfiguration.jumpMultiplier * direction
       this.setPlayerMotion('jump')
       this.emitFootfallPixels(false)
     }
-    this.velocityY += GRAVITY * (deltaMs / 1_000)
-    this.player.y += this.velocityY * (deltaMs / 1_000)
+
+    const seconds = deltaMs / 1_000
+    const gravityScale =
+      mode === 'moon' ? 0.36 : mode === 'inverted' ? -1 : mode === 'zero_g' ? 0 : 1
+    if (mode === 'zero_g') {
+      const floatTarget = (PLAYER_GROUND_Y + PLAYER_CEILING_Y) / 2
+      this.velocityY += (floatTarget - this.player.y) * 0.9 * seconds
+      this.velocityY *= Math.pow(0.985, deltaMs / 16.67)
+    } else {
+      this.velocityY += GRAVITY * gravityScale * seconds
+    }
+    this.player.y += this.velocityY * seconds
 
     if (this.player.y >= PLAYER_GROUND_Y) {
       this.player.y = PLAYER_GROUND_Y
-      this.velocityY = 0
+      this.velocityY = mode === 'zero_g' ? -Math.abs(this.velocityY) * 0.55 : 0
+    }
+    if (this.player.y <= PLAYER_CEILING_Y) {
+      this.player.y = PLAYER_CEILING_Y
+      this.velocityY = mode === 'zero_g' ? Math.abs(this.velocityY) * 0.55 : 0
     }
 
-    const isGrounded = this.player.y >= PLAYER_GROUND_Y - 1
+    const isGrounded =
+      mode === 'inverted'
+        ? this.player.y <= PLAYER_CEILING_Y + 1
+        : mode !== 'zero_g' && this.player.y >= PLAYER_GROUND_Y - 1
     if (isGrounded && !this.wasGrounded) {
       this.landingSquashMs = 120
       this.emitFootfallPixels(true)
@@ -196,16 +254,28 @@ export class RunnerScene extends Phaser.Scene {
 
     this.setPlayerMotion(isGrounded ? 'run' : 'jump')
     this.alignPlayerFrame()
-    this.player.setRotation(isGrounded ? 0 : Phaser.Math.Clamp(this.velocityY / 8_000, -0.08, 0.06))
-
-    if (this.landingSquashMs > 0) {
-      this.landingSquashMs = Math.max(0, this.landingSquashMs - deltaMs)
-      this.player.setScale(1.08, 0.9)
+    if (this.runnerConfiguration.rotationMode === 'spin') {
+      this.player.rotation += deltaMs / 190
+    } else if (this.runnerConfiguration.rotationMode === 'flipped') {
+      this.player.setRotation(Math.PI)
     } else {
-      this.player.setScale(1)
+      this.player.setRotation(
+        isGrounded ? 0 : Phaser.Math.Clamp(this.velocityY / 8_000, -0.08, 0.06),
+      )
     }
 
-    const jumpHeight = Math.max(0, PLAYER_GROUND_Y - this.player.y)
+    const scale = this.runnerConfiguration.scaleMultiplier
+    if (this.landingSquashMs > 0) {
+      this.landingSquashMs = Math.max(0, this.landingSquashMs - deltaMs)
+      this.player.setScale(scale * 1.08, scale * 0.9)
+    } else {
+      this.player.setScale(scale)
+    }
+
+    const jumpHeight = Math.min(
+      Math.abs(PLAYER_GROUND_Y - this.player.y),
+      Math.abs(this.player.y - PLAYER_CEILING_Y),
+    )
     const shadowScale = Phaser.Math.Clamp(1 - jumpHeight / 260, 0.42, 1)
     this.playerShadow
       ?.setScale(shadowScale, Phaser.Math.Linear(0.58, 1, shadowScale))
@@ -217,18 +287,19 @@ export class RunnerScene extends Phaser.Scene {
     this.obstacleClockMs -= deltaMs
     this.pickupClockMs -= deltaMs
 
-    if (this.obstacleClockMs <= 0) {
+    if (!this.suppressBaselineSpawns && this.obstacleClockMs <= 0) {
       this.spawnObstacle({
         type: 'spawn_obstacle',
         obstacle: this.elapsedMs > 14_000 ? 'spike_row' : 'rolling_boulder',
         lane: 'ground',
-        delayMs: 0,
-        durationMs: 8_000,
+        speedMultiplier: 1,
         author: 'gremlin',
         title: this.elapsedMs > 14_000 ? 'Spike Parade' : 'Warm-Up Trouble',
         sourceMutationId: `baseline-${Math.floor(this.elapsedMs)}`,
       })
       this.obstacleClockMs = Math.max(1_100, 2_300 - this.elapsedMs / 22)
+    } else if (this.suppressBaselineSpawns) {
+      this.obstacleClockMs = Math.max(this.obstacleClockMs, 700)
     }
 
     if (this.pickupClockMs <= 0) {
@@ -238,15 +309,31 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private updateObstacles(deltaMs: number) {
-    const speed = 290 + Math.min(200, this.elapsedMs / 110)
+    const speed =
+      (290 + Math.min(200, this.elapsedMs / 110)) *
+      this.runnerConfiguration.speedMultiplier
     for (let index = this.obstacles.length - 1; index >= 0; index -= 1) {
       const obstacle = this.obstacles[index]
-      obstacle.view.x -= speed * (deltaMs / 1_000)
+      obstacle.view.x -= speed * obstacle.speedMultiplier * (deltaMs / 1_000)
       if (obstacle.kind === 'moving_wall') {
-        obstacle.view.y = obstacle.baseY + Math.sin(this.elapsedMs / 180 + obstacle.phase) * 12
+        obstacle.view.y = obstacle.baseY + Math.sin(this.elapsedMs / 180 + obstacle.phase) * 18
       }
       if (obstacle.kind === 'rolling_boulder') {
         obstacle.view.rotation -= deltaMs / 230
+      }
+      if (obstacle.kind === 'falling_anvil') {
+        obstacle.view.y = Math.min(
+          GROUND_Y - obstacle.height / 2,
+          obstacle.view.y + deltaMs * 0.16,
+        )
+      }
+      if (obstacle.kind === 'rubber_duck') {
+        obstacle.view.y = obstacle.baseY + Math.sin(this.elapsedMs / 135 + obstacle.phase) * 28
+        obstacle.view.rotation = Math.sin(this.elapsedMs / 240 + obstacle.phase) * 0.18
+      }
+      if (obstacle.kind === 'fork_storm') {
+        obstacle.view.y = obstacle.baseY + Math.sin(this.elapsedMs / 95 + obstacle.phase) * 20
+        obstacle.view.rotation += deltaMs / 120
       }
       if (obstacle.view.x < -100) {
         obstacle.view.destroy()
@@ -256,7 +343,9 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private updatePickups(deltaMs: number) {
-    const speed = 290 + Math.min(200, this.elapsedMs / 110)
+    const speed =
+      (290 + Math.min(200, this.elapsedMs / 110)) *
+      this.runnerConfiguration.speedMultiplier
     for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
       const pickup = this.pickups[index]
       pickup.view.x -= speed * (deltaMs / 1_000)
@@ -269,12 +358,15 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private checkCollisions() {
-    if (!this.player) return
+    if (!this.player || this.collisionGraceMs > 0) return
+    const scale = this.runnerConfiguration.scaleMultiplier
+    const playerWidth = 34 * scale
+    const playerHeight = 68 * scale
     const playerBounds = new Phaser.Geom.Rectangle(
-      this.player.x - 17,
-      this.player.y - 34,
-      34,
-      68,
+      this.player.x - playerWidth / 2,
+      this.player.y - playerHeight / 2,
+      playerWidth,
+      playerHeight,
     )
 
     for (const obstacle of this.obstacles) {
@@ -307,15 +399,121 @@ export class RunnerScene extends Phaser.Scene {
     }
   }
 
-  private maybeQueuePatch(snapshot: GameStateViewModel) {
-    const patch = snapshot.activePatch
-    if (!this.alive || patch.status !== 'active' || this.seenPatchIds.has(patch.id)) return
-    this.seenPatchIds.add(patch.id)
-    const safePatch = obstaclePatchFromView(patch)
-    this.showPatchSignal(safePatch)
-    this.time.delayedCall(safePatch.delayMs, () => {
-      if (this.alive) this.spawnObstacle(safePatch)
+  private reconcilePatch(snapshot: GameStateViewModel) {
+    const view = snapshot.activePatch
+    if (!this.alive || view.status !== 'active') {
+      if (this.activeRunnerMutation) this.clearRunnerMutation()
+      return
+    }
+    if (this.activeRunnerMutation?.id === view.id || this.seenPatchIds.has(view.id)) return
+
+    this.clearRunnerMutation()
+    this.seenPatchIds.add(view.id)
+    const patch = runnerMutationPatchFromView(view)
+    this.activeRunnerMutation = patch
+    this.suppressBaselineSpawns = patch.waves.length > 0
+    this.showPatchSignal(patch)
+    if (patch.configuration) this.applyRunnerConfiguration(patch.configuration)
+    this.game.canvas.dataset.activeMutation = patch.id
+
+    for (const wave of patch.waves) {
+      if (wave.trigger === 'onActivation') {
+        this.scheduleHazardWave(patch, wave.effect)
+        continue
+      }
+      const interval = this.time.addEvent({
+        delay: wave.everyMs ?? 3_000,
+        loop: true,
+        callback: () => {
+          if (this.alive && this.activeRunnerMutation?.id === patch.id) {
+            this.scheduleHazardWave(patch, wave.effect)
+          }
+        },
+      })
+      this.mutationTimers.push(interval)
+    }
+  }
+
+  private applyRunnerConfiguration(effect: ConfigureRunnerEffect) {
+    this.runnerConfiguration = {
+      gravityMode: effect.gravityMode,
+      jumpMultiplier: effect.jumpMultiplier,
+      speedMultiplier: effect.speedMultiplier,
+      scaleMultiplier: effect.scaleMultiplier,
+      rotationMode: effect.rotationMode,
+      worldStyle: effect.worldStyle,
+    }
+    this.collisionGraceMs = Math.max(this.collisionGraceMs, 900)
+    this.velocityY = 0
+    if (this.player) {
+      this.player.y =
+        effect.gravityMode === 'inverted'
+          ? PLAYER_CEILING_Y
+          : effect.gravityMode === 'zero_g'
+            ? (PLAYER_GROUND_Y + PLAYER_CEILING_Y) / 2
+            : PLAYER_GROUND_Y
+    }
+
+    const styles: Record<RunnerConfiguration['worldStyle'], { color: number; alpha: number }> = {
+      normal: { color: COLORS.sky, alpha: 0 },
+      neon: { color: COLORS.pink, alpha: 0.18 },
+      void: { color: COLORS.navyDark, alpha: 0.42 },
+      sunset: { color: COLORS.gold, alpha: 0.2 },
+    }
+    const style = styles[effect.worldStyle]
+    this.mutationOverlay?.setFillStyle(style.color).setAlpha(style.alpha)
+    this.cameras.main.flash(180, 121, 215, 255, false)
+    this.game.canvas.dataset.runnerGravity = effect.gravityMode
+    this.game.canvas.dataset.runnerRotation = effect.rotationMode
+    this.game.canvas.dataset.worldStyle = effect.worldStyle
+  }
+
+  private scheduleHazardWave(
+    patch: RunnerMutationPatch,
+    effect: SpawnRunnerHazardEffect,
+  ) {
+    this.showHazardSignal(effect)
+    this.game.canvas.dataset.hazardKind = effect.hazard
+    const warning = this.time.delayedCall(effect.telegraphMs, () => {
+      if (!this.alive || this.activeRunnerMutation?.id !== patch.id) return
+      for (let index = 0; index < effect.count; index += 1) {
+        const timer = this.time.delayedCall(index * effect.spacingMs, () => {
+          if (this.alive && this.activeRunnerMutation?.id === patch.id) {
+            this.spawnObstacle(obstaclePatchFromWave(patch, effect))
+          }
+        })
+        this.mutationTimers.push(timer)
+      }
     })
+    this.mutationTimers.push(warning)
+  }
+
+  private clearRunnerMutation() {
+    const mutationId = this.activeRunnerMutation?.id
+    for (const timer of this.mutationTimers) timer.remove(false)
+    this.mutationTimers = []
+    if (mutationId) {
+      for (let index = this.obstacles.length - 1; index >= 0; index -= 1) {
+        if (this.obstacles[index]?.sourceMutationId !== mutationId) continue
+        this.obstacles[index]?.view.destroy()
+        this.obstacles.splice(index, 1)
+      }
+    }
+    this.activeRunnerMutation = undefined
+    this.runnerConfiguration = { ...DEFAULT_RUNNER_CONFIGURATION }
+    this.suppressBaselineSpawns = false
+    this.mutationOverlay?.setAlpha(0)
+    this.velocityY = 0
+    this.collisionGraceMs = Math.max(this.collisionGraceMs, 1_000)
+    if (this.player) {
+      this.player.y = PLAYER_GROUND_Y
+      this.player.setRotation(0).setScale(1)
+    }
+    delete this.game.canvas.dataset.activeMutation
+    delete this.game.canvas.dataset.hazardKind
+    this.game.canvas.dataset.runnerGravity = 'normal'
+    this.game.canvas.dataset.runnerRotation = 'upright'
+    this.game.canvas.dataset.worldStyle = 'normal'
   }
 
   private spawnObstacle(patch: ObstaclePatch) {
@@ -327,7 +525,7 @@ export class RunnerScene extends Phaser.Scene {
         : COLORS.pink
     let width = 54
     let height = 54
-    const view = this.add.container(x, GROUND_Y - height / 2)
+    const view = this.add.container(x, GROUND_Y - height / 2).setDepth(3)
 
     if (patch.obstacle === 'rolling_boulder') {
       width = 56
@@ -344,7 +542,6 @@ export class RunnerScene extends Phaser.Scene {
     } else if (patch.obstacle === 'spike_row') {
       width = 78
       height = 38
-      view.y = GROUND_Y - height / 2
       const spikes = this.add.graphics()
       spikes.fillStyle(COLORS.navy)
       spikes.fillRect(-42, 12, 84, 10)
@@ -354,16 +551,61 @@ export class RunnerScene extends Phaser.Scene {
       spikes.fillStyle(authorColor)
       spikes.fillRect(-38, 14, 76, 5)
       view.add(spikes)
-    } else {
+    } else if (patch.obstacle === 'moving_wall') {
       width = 46
       height = 70
-      view.y = GROUND_Y - height / 2
       view.add([
         this.add.rectangle(0, 0, width + 8, height + 8, COLORS.navy),
         this.add.rectangle(0, 0, width, height, authorColor),
         this.add.rectangle(0, -18, 24, 8, COLORS.cream),
         this.add.rectangle(0, 8, 24, 8, COLORS.cream),
       ])
+    } else if (patch.obstacle === 'falling_anvil') {
+      width = 62
+      height = 52
+      const anvil = this.add.graphics()
+      anvil.fillStyle(COLORS.navy)
+      anvil.fillRect(-32, -22, 64, 15)
+      anvil.fillTriangle(-32, -7, 22, -7, 7, 8)
+      anvil.fillRect(-9, 7, 18, 25)
+      anvil.fillStyle(authorColor)
+      anvil.fillRect(-25, -18, 50, 7)
+      anvil.fillStyle(COLORS.cream)
+      anvil.fillRect(-5, 12, 10, 12)
+      view.add(anvil)
+    } else if (patch.obstacle === 'rubber_duck') {
+      width = 66
+      height = 48
+      view.add([
+        this.add.ellipse(-4, 7, 58, 36, COLORS.gold).setStrokeStyle(5, COLORS.navy),
+        this.add.ellipse(20, -12, 30, 30, COLORS.gold).setStrokeStyle(5, COLORS.navy),
+        this.add.triangle(39, -9, 0, 0, 18, 7, 0, 14, COLORS.red),
+        this.add.rectangle(25, -17, 5, 5, COLORS.navy),
+        this.add.rectangle(-12, 4, 16, 8, authorColor),
+      ])
+    } else {
+      width = 48
+      height = 72
+      const forks = this.add.graphics()
+      forks.lineStyle(7, COLORS.navy)
+      for (const forkX of [-14, 0, 14]) {
+        forks.lineBetween(forkX, -27, forkX, 28)
+        forks.lineBetween(forkX - 5, -27, forkX - 5, -16)
+        forks.lineBetween(forkX + 5, -27, forkX + 5, -16)
+      }
+      forks.lineStyle(3, authorColor)
+      forks.strokeCircle(0, 0, 27)
+      view.add(forks)
+    }
+
+    view.y =
+      patch.lane === 'ground'
+        ? GROUND_Y - height / 2
+        : patch.lane === 'ceiling'
+          ? PLAYER_CEILING_Y + height / 2
+          : PLAYER_GROUND_Y - 122
+    if (patch.lane === 'ceiling' && patch.obstacle === 'spike_row') {
+      view.setScale(1, -1)
     }
 
     this.obstacles.push({
@@ -375,6 +617,8 @@ export class RunnerScene extends Phaser.Scene {
       title: patch.title,
       phase: Math.random() * Math.PI,
       baseY: view.y,
+      speedMultiplier: patch.speedMultiplier,
+      sourceMutationId: patch.sourceMutationId,
     })
   }
 
@@ -462,22 +706,44 @@ export class RunnerScene extends Phaser.Scene {
     this.time.delayedCall(START_GRACE_MS, () => banner.destroy())
   }
 
-  private showPatchSignal(patch: ObstaclePatch) {
+  private showPatchSignal(patch: RunnerMutationPatch) {
     const banner = this.add.container(WIDTH / 2, 150).setDepth(10)
+    const physics = patch.configuration
+      ? `${patch.configuration.gravityMode.replace('_', ' ')} GRAVITY // ${patch.configuration.rotationMode}`
+      : `${patch.waves.length} HAZARD DEMAND`
     banner.add([
-      this.add.rectangle(0, 0, 420, 74, COLORS.navy),
-      this.add.rectangle(0, 0, 408, 62, COLORS.pink),
-      this.add.text(0, -14, `${patch.author.toUpperCase()} DEPLOYED`, this.pixelText(9, COLORS.cream)).setOrigin(0.5),
-      this.add.text(0, 13, patch.title.toUpperCase(), this.pixelText(7, COLORS.navy)).setOrigin(0.5),
+      this.add.rectangle(0, 0, 500, 86, COLORS.navy),
+      this.add.rectangle(0, 0, 486, 72, COLORS.pink),
+      this.add.text(0, -19, `${patch.author.toUpperCase()} DEMANDED`, this.pixelText(9, COLORS.cream)).setOrigin(0.5),
+      this.add.text(0, 4, patch.title.toUpperCase(), this.pixelText(7, COLORS.navy)).setOrigin(0.5),
+      this.add.text(0, 25, `REFEREE APPROVED // ${physics.toUpperCase()}`, this.pixelText(5, COLORS.navy)).setOrigin(0.5),
     ])
     this.tweens.add({
       targets: banner,
       y: 160,
       alpha: 0,
-      delay: 1_050,
+      delay: 1_450,
       duration: 350,
       ease: 'Stepped',
       onComplete: () => banner.destroy(),
+    })
+  }
+
+  private showHazardSignal(effect: SpawnRunnerHazardEffect) {
+    const warning = this.add.container(WIDTH - 210, 245).setDepth(11)
+    warning.add([
+      this.add.rectangle(0, 0, 330, 58, COLORS.navy),
+      this.add.rectangle(0, 0, 318, 46, COLORS.gold),
+      this.add.text(0, -10, `INCOMING ${effect.hazard.replaceAll('_', ' ').toUpperCase()} ×${effect.count}`, this.pixelText(6, COLORS.navy)).setOrigin(0.5),
+      this.add.text(0, 11, `${effect.lane.toUpperCase()} LANE // ${effect.telegraphMs}MS WARNING`, this.pixelText(5, COLORS.purple)).setOrigin(0.5),
+    ])
+    this.tweens.add({
+      targets: warning,
+      alpha: 0,
+      delay: Math.max(250, effect.telegraphMs - 250),
+      duration: 220,
+      ease: 'Stepped',
+      onComplete: () => warning.destroy(),
     })
   }
 
@@ -509,10 +775,15 @@ export class RunnerScene extends Phaser.Scene {
     for (let x = 0; x < WIDTH; x += 42) {
       this.add.rectangle(x, GROUND_Y + 48, 20, 12, COLORS.purple, 0.6)
     }
+    this.mutationOverlay = this.add
+      .rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, COLORS.sky, 0)
+      .setDepth(1)
   }
 
   private updateBackdrop(deltaMs: number) {
-    const speed = 130 + Math.min(100, this.elapsedMs / 180)
+    const speed =
+      (130 + Math.min(100, this.elapsedMs / 180)) *
+      this.runnerConfiguration.speedMultiplier
     for (const line of this.speedLines) {
       line.x -= speed * (deltaMs / 1_000)
       if (line.x < -60) line.x = WIDTH + Math.random() * 80

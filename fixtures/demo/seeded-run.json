@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "Fork Fighter two-minute seeded demo",
+  "seed": "fork-fighter-demo-v1",
+  "provider": "mock",
+  "patchCadenceMs": 5000,
+  "proposalDeadlineMs": 2000,
+  "agentDelayMs": 500,
+  "mutationDurationMs": 8000,
+  "expectedVisibleEvents": [
+    "three Game Masters enter drafting state",
+    "at least one proposal is rejected by the referee",
+    "one proposal is selected",
+    "a 3-5 second incoming-patch countdown is shown",
+    "one typed mutation becomes active",
+    "the mutation expires and the stable runner rules are restored"
+  ]
+}

@@ -148,7 +148,9 @@ function worstCaseSpawnCount(mutation: MutationDefinition): number {
       spawnCount: trigger.effects.reduce(
         (total, effect) =>
           total +
-          (effect.type === 'spawnCollector' || effect.type === 'spawnBonusCore'
+          (effect.type === 'spawnCollector' ||
+          effect.type === 'spawnBonusCore' ||
+          effect.type === 'spawnRunnerHazard'
             ? effect.count
             : 0),
         0,
@@ -267,6 +269,7 @@ function capabilityReasons(
   const modifiedRules = new Set<string>()
   let extractionAdjustments = 0
   let hazardRelocations = 0
+  let runnerConfigurations = 0
   for (const { effect, effectIndex, trigger, triggerIndex } of mutationEffectEntries(
     mutation,
   )) {
@@ -348,6 +351,90 @@ function capabilityReasons(
       }
     }
     if (effect.type === 'relocateHazard') hazardRelocations += 1
+    if (effect.type === 'configureRunner') {
+      runnerConfigurations += 1
+      if (trigger.type !== 'onActivation') {
+        reasons.push(
+          reason(
+            'repeating-runner-configuration',
+            'Runner physics may change only once on mutation activation.',
+            path,
+          ),
+        )
+      }
+      if (mutation.durationMs > policy.maxRunnerPhysicsDurationMs) {
+        reasons.push(
+          reason(
+            'runner-physics-duration-limit',
+            'Runner physics changes exceed the live-match duration limit.',
+            ['mutation', 'durationMs'],
+          ),
+        )
+      }
+      if (
+        effect.speedMultiplier > policy.maxRunnerSpeedMultiplier ||
+        effect.scaleMultiplier > policy.maxRunnerScaleMultiplier
+      ) {
+        reasons.push(
+          reason(
+            'runner-configuration-policy-limit',
+            'Runner speed or scale exceeds the referee policy.',
+            path,
+          ),
+        )
+      }
+      const noOp =
+        effect.gravityMode === 'normal' &&
+        effect.rotationMode === 'upright' &&
+        effect.worldStyle === 'normal' &&
+        effect.jumpMultiplier === 1 &&
+        effect.speedMultiplier === 1 &&
+        effect.scaleMultiplier === 1
+      if (noOp) {
+        reasons.push(
+          reason(
+            'runner-configuration-noop',
+            'Runner configuration must create a visible or mechanical change.',
+            path,
+          ),
+        )
+      }
+    }
+    if (effect.type === 'spawnRunnerHazard') {
+      if (trigger.type !== 'onActivation' && trigger.type !== 'onInterval') {
+        reasons.push(
+          reason(
+            'runner-hazard-trigger-unsupported',
+            'Runner hazards may spawn only on activation or a bounded interval.',
+            path,
+          ),
+        )
+      }
+      if (
+        effect.telegraphMs < policy.minRunnerTelegraphMs ||
+        effect.speedMultiplier > policy.maxRunnerHazardSpeedMultiplier
+      ) {
+        reasons.push(
+          reason(
+            'runner-hazard-policy-limit',
+            'Runner hazards need a longer warning or a lower travel speed.',
+            path,
+          ),
+        )
+      }
+      if (
+        trigger.type === 'onInterval' &&
+        effect.telegraphMs + effect.spacingMs * (effect.count - 1) > trigger.everyMs
+      ) {
+        reasons.push(
+          reason(
+            'runner-hazard-wave-overlap',
+            'A runner hazard wave must finish its warning and spacing before repeating.',
+            path,
+          ),
+        )
+      }
+    }
   }
   if (extractionAdjustments > 1) {
     reasons.push(
@@ -363,6 +450,15 @@ function capabilityReasons(
       reason(
         'duplicate-hazard-relocation',
         'A mutation may relocate only one hazard at a time.',
+        ['mutation', 'triggers'],
+      ),
+    )
+  }
+  if (runnerConfigurations > 1) {
+    reasons.push(
+      reason(
+        'duplicate-runner-configuration',
+        'A mutation may configure runner physics only once.',
         ['mutation', 'triggers'],
       ),
     )

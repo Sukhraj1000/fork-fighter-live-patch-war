@@ -38,6 +38,30 @@ const emptyStats: EndlessRunStats = {
 }
 
 const BEST_SCORE_KEY = 'fork-fighter:best-score'
+const SEEDED_DEMO_SEED = 'fork-fighter-demo-v1'
+
+function isSeededDemo(): boolean {
+  return new URLSearchParams(window.location.search).get('demo') === 'seeded'
+}
+
+function mutationDemands(patch: GameStateViewModel['activePatch']): string[] {
+  if (!patch.mutation) return []
+  return patch.mutation.triggers.flatMap(({ effects }) =>
+    effects.flatMap((effect) => {
+      if (effect.type === 'configureRunner') {
+        return [
+          `${effect.gravityMode.replace('_', ' ')} gravity`,
+          `${effect.rotationMode} runner`,
+          `${effect.speedMultiplier}× world speed`,
+        ]
+      }
+      if (effect.type === 'spawnRunnerHazard') {
+        return [`${effect.count}× ${effect.hazard.replaceAll('_', ' ')} · ${effect.lane}`]
+      }
+      return []
+    }),
+  )
+}
 
 function storedBestScore(): number {
   try {
@@ -219,6 +243,7 @@ function StatusBadge({ status: value }: { status: PatchStatus }) {
 }
 
 export function App() {
+  const seededDemo = isSeededDemo()
   const [phase, setPhase] = useState<'ready' | 'starting' | 'playing' | 'gameover' | 'error'>('ready')
   const [live, setLive] = useState<LiveMatchPayload>()
   const [localSnapshot, setLocalSnapshot] = useState<GameStateViewModel>()
@@ -324,7 +349,7 @@ export function App() {
 
     try {
       const [created, runtime] = await Promise.all([
-        createLiveMatch(),
+        createLiveMatch(seededDemo ? { seed: SEEDED_DEMO_SEED } : {}),
         getRuntimeInfo(),
       ])
       setLive(created)
@@ -374,12 +399,12 @@ export function App() {
       <main className="launch-shell">
         <div className="pixel-sky" aria-hidden="true"><i className="star star-1" /><i className="star star-2" /><i className="star star-3" /></div>
         <section className="launch-card pixel-panel">
-          <small>ENDLESS RUNNER // LIVE GAME MASTER PATCHES</small>
+          <small>ENDLESS RUNNER // LIVE GAME MASTER PATCHES{seededDemo ? ' // SEEDED DEMO' : ''}</small>
           <h1><span>FORK</span>/FIGHTER</h1>
           <p>Run forever. Grab fork shards. Jump every obstacle. Three long-running Game Masters watch your run and deploy typed, validated traps to end it.</p>
           {bestScore > 0 && <div className="launch-best"><small>PERSONAL BEST</small><strong>{bestScore.toLocaleString('en-GB')}</strong></div>}
           <button type="button" onClick={() => void startRun()} disabled={phase === 'starting'} data-testid="start-run">
-            {phase === 'starting' ? 'STARTING RUN…' : phase === 'error' ? 'TRY AGAIN' : 'START LIVE RUN'}
+            {phase === 'starting' ? 'STARTING RUN…' : phase === 'error' ? 'TRY AGAIN' : seededDemo ? 'START SEEDED DEMO' : 'START LIVE RUN'}
           </button>
           {error && <p className="launch-error" role="alert">{error}</p>}
           <footer>SPACE / W / ↑ / TAP TO JUMP // ONE HIT = GAME OVER // HIGHEST SCORE WINS</footer>
@@ -389,6 +414,7 @@ export function App() {
   }
 
   const activeAuthor = snapshot.directors.find((director) => director.id === snapshot.activePatch.author)
+  const demands = mutationDemands(snapshot.activePatch)
   const isGameOver = phase === 'gameover' && result
   const shellConnected = transport === 'local' || connected
   const patchIndex = live?.match.patchIndex ?? 0
@@ -444,7 +470,9 @@ export function App() {
           <section className={`executor-card patch-${snapshot.activePatch.status}`} data-testid="patch-card" data-status={snapshot.activePatch.status}>
             <div className="executor-portrait"><Portrait index={snapshot.activePatch.author === 'architect' ? 0 : snapshot.activePatch.author === 'gremlin' ? 1 : 2} name={activeAuthor?.name ?? snapshot.activePatch.author} /><span className="portrait-scan" aria-hidden="true" /></div>
             <div className="executor-copy"><small>{snapshot.activePatch.status === 'incoming' ? 'NEXT ATTACKER' : snapshot.activePatch.status === 'expired' ? 'LAST ATTACKER' : 'ATTACKING AS'}</small><h2>{activeAuthor?.name ?? snapshot.activePatch.author.toUpperCase()}</h2><StatusBadge status={snapshot.activePatch.status} /></div>
-            <div className="execution-rule" /><small className="change-label">OBSTACLE PATCH</small><h3>{snapshot.activePatch.title}</h3><p className="patch-note">{snapshot.activePatch.note}</p>
+            <div className="execution-rule" /><small className="change-label">REFEREE-ORDERED DEMAND</small><h3>{snapshot.activePatch.title}</h3><p className="patch-note">{snapshot.activePatch.note}</p>
+            {demands.length > 0 && <div className="demand-list" data-testid="patch-demands">{demands.map((demand) => <span key={demand}>{demand}</span>)}</div>}
+            {snapshot.activePatch.status === 'active' && <div className="referee-stamp">VALIDATOR APPROVED · 1 PATCH LIVE</div>}
             {snapshot.activePatch.countdownSeconds !== undefined && <div className="executor-countdown"><span>DEPLOYS IN</span><b>00:{String(snapshot.activePatch.countdownSeconds).padStart(2, '0')}</b></div>}
           </section>
           <section className="director-stack" aria-label="Game master statuses">
@@ -455,7 +483,7 @@ export function App() {
           </ol>
         </aside>
       </section>
-      <footer className="page-footer"><span>TYPED OBSTACLES ONLY</span><span className="shell-safe"><i /> GAME SHELL {transport === 'local' ? 'FAILSAFE' : connected ? 'LIVE' : 'RECONNECTING'}</span><span>{provider === 'daytona' ? 'DAYTONA // 3 PARALLEL CODEX WORKERS' : provider === 'mock' ? 'LOCAL MOCK GAME MASTERS' : 'LOCAL DEMO FALLBACK'}</span></footer>
+      <footer className="page-footer"><span>{seededDemo ? 'SEEDED DEMO // ' : ''}TYPED OBSTACLES ONLY</span><span className="shell-safe"><i /> GAME SHELL {transport === 'local' ? 'FAILSAFE' : connected ? 'LIVE' : 'RECONNECTING'}</span><span>{provider === 'daytona' ? 'DAYTONA // 3 PARALLEL CODEX WORKERS' : provider === 'mock' ? 'LOCAL MOCK GAME MASTERS' : 'LOCAL DEMO FALLBACK'}</span></footer>
     </main>
   )
 }

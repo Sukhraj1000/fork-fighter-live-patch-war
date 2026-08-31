@@ -22,7 +22,7 @@ test('scores an endless run, reports performance, dies in one hit, and restarts'
     return (await response.json()).live.match.context.telemetry.primaryObjectiveProgress as number
   }).toBeGreaterThan(0)
 
-  await expect(page.getByTestId('game-over')).toBeVisible({ timeout: 12_000 })
+  await expect(page.getByTestId('game-over')).toBeVisible({ timeout: 35_000 })
   await expect(page.getByTestId('run-status')).toHaveText('GAME OVER')
   await expect(page.getByTestId('game-over')).toContainText('FINAL SCORE')
   await expect(page.getByTestId('game-over')).toContainText('PERSONAL BEST')
@@ -31,6 +31,29 @@ test('scores an endless run, reports performance, dies in one hit, and restarts'
   await page.getByTestId('restart-run').click()
   await expect(page.getByTestId('run-status')).toContainText('RUNNING')
   await expect(page.getByTestId('game-over')).not.toBeVisible()
+})
+
+test('seeded demo always shows a rejected candidate and an accepted live patch', async ({
+  page,
+}) => {
+  await page.goto('/?demo=seeded')
+  await expect(page.getByTestId('start-run')).toHaveText('START SEEDED DEMO')
+  const createdRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith('/api/live-matches') && request.method() === 'POST',
+  )
+  await page.getByTestId('start-run').click()
+  expect((await createdRequest).postDataJSON()).toEqual({
+    seed: 'fork-fighter-demo-v1',
+  })
+
+  await expect(page.getByTestId('activity-rejected').first()).toBeVisible()
+  await expect(page.getByTestId('activity-selected').first()).toBeVisible()
+  await expect(page.getByTestId('patch-card')).toHaveAttribute('data-status', 'incoming')
+  await expect(page.getByTestId('patch-card')).toHaveAttribute('data-status', 'active', {
+    timeout: 7_000,
+  })
+  await expect(page.getByText('SEEDED DEMO // TYPED OBSTACLES ONLY')).toBeVisible()
 })
 
 test('proposal work leaves the live game responsive', async ({ request }) => {
@@ -45,6 +68,41 @@ test('proposal work leaves the live game responsive', async ({ request }) => {
   const afterTick = (await after.json()).live.game.tick as number
 
   expect(afterTick).toBeGreaterThan(beforeTick)
+})
+
+test('the referee-selected demand changes and then restores live runner physics', async ({
+  page,
+  request,
+}) => {
+  await page.goto('/')
+  const createdResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/live-matches') &&
+      response.request().method() === 'POST',
+  )
+  await page.getByTestId('start-run').click()
+  const matchId = (await (await createdResponse).json()).live.matchId as string
+  const canvas = page.locator('.arena-canvas canvas')
+  await canvas.waitFor()
+
+  await expect.poll(async () => {
+    const response = await request.get(`/api/matches/${matchId}/log`)
+    const entries = (await response.json()).entries as Array<{
+      type: string
+      data: { author?: string }
+    }>
+    return entries.find(({ type }) => type === 'proposal_selected')?.data.author
+  }).toBe('gremlin')
+
+  await expect(canvas).toHaveAttribute('data-runner-gravity', 'inverted')
+  await expect(canvas).toHaveAttribute('data-hazard-kind', 'fork_storm')
+  await expect(page.getByTestId('patch-card')).toContainText(/Upside-Down Fork Storm/i)
+  await expect(page.getByTestId('patch-demands')).toContainText(/inverted gravity/i)
+  await expect(page.getByTestId('patch-demands')).toContainText(/fork storm/i)
+  await expect(canvas).toHaveAttribute('data-runner-gravity', 'normal', {
+    timeout: 10_000,
+  })
+  await expect(canvas).not.toHaveAttribute('data-active-mutation', /.+/)
 })
 
 test('phone players can tap the arena through non-interactive HUD overlays', async ({

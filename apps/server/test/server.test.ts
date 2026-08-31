@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -183,6 +183,37 @@ describe('match HTTP API', () => {
 })
 
 describe('patch cadence and dependency-injected agents', () => {
+  it('returns a patch difficulty reservation when that patch expires', async () => {
+    const clock = new ManualClock()
+    const logStore = new InMemoryMatchLogStore()
+    const host = new MatchHost(dependencies({ clock, logStore }))
+
+    await host.createMatch({
+      matchId: 'match-budget-replenishment',
+      remainingDifficultyBudget: 1.25,
+      autoStart: false,
+    })
+    await host.prepareNextPatch('match-budget-replenishment')
+    const prepared = host.getSnapshot('match-budget-replenishment')
+    const cost = prepared.pendingPatch?.proposal.mutation.difficultyCost
+    const durationMs = prepared.pendingPatch?.proposal.mutation.durationMs
+    expect(cost).toBeGreaterThan(0)
+    expect(durationMs).toBeDefined()
+
+    clock.advanceBy(2_000)
+    await host.triggerPatchBoundary('match-budget-replenishment')
+    expect(
+      host.getSnapshot('match-budget-replenishment').context.remainingDifficultyBudget,
+    ).toBeCloseTo(1.25 - cost!)
+
+    clock.advanceBy(durationMs!)
+    for (let attempt = 0; attempt < 10; attempt += 1) await Promise.resolve()
+    expect(
+      host.getSnapshot('match-budget-replenishment').context.remainingDifficultyBudget,
+    ).toBe(1.25)
+    await host.close()
+  })
+
   it('logs proposal, rejection, selection, activation, expiry, and outcome', async () => {
     const clock = new ManualClock()
     const logStore = new InMemoryMatchLogStore()
@@ -376,6 +407,44 @@ describe('SSE and JSONL durability', () => {
         expect(() => JSON.parse(line)).not.toThrow()
       }
     } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rotates match logs before one abandoned session can grow without bound', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'fork-fighter-log-rotation-'))
+    const store = new JsonlMatchLogStore(directory, {
+      maxBytes: 700,
+      maxFiles: 2,
+    })
+    try {
+      for (let sequence = 1; sequence <= 40; sequence += 1) {
+        await store.append({
+          sequence,
+          atMs: sequence,
+          matchId: 'bounded-match',
+          type: 'telemetry_ingested',
+          data: { sample: 'x'.repeat(120), sequence },
+        })
+      }
+
+      const files = (await readdir(directory)).filter((name) =>
+        name.startsWith('bounded-match.jsonl'),
+      )
+      expect(files.sort()).toEqual([
+        'bounded-match.jsonl',
+        'bounded-match.jsonl.1',
+      ])
+      const sizes = await Promise.all(
+        files.map(async (name) => (await stat(join(directory, name))).size),
+      )
+      expect(Math.max(...sizes)).toBeLessThanOrEqual(900)
+
+      const retained = await store.read('bounded-match')
+      expect(retained.at(-1)?.sequence).toBe(40)
+      expect(retained.length).toBeLessThan(40)
+    } finally {
+      await store.close()
       await rm(directory, { recursive: true, force: true })
     }
   })

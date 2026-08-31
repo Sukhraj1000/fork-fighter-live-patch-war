@@ -22,6 +22,11 @@ export type ValidatorPolicy = Readonly<{
   maxDifficultyCost: number
   maxCollectorContactDamage: number
   maxCollectorSpeedMultiplier: number
+  minRunnerTelegraphMs: number
+  maxRunnerPhysicsDurationMs: number
+  maxRunnerSpeedMultiplier: number
+  maxRunnerScaleMultiplier: number
+  maxRunnerHazardSpeedMultiplier: number
   safeSpawnClearance: number
   reachabilityCellSize: number
   maxReachabilityCells: number

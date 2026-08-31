@@ -9,12 +9,12 @@ WORKDIR /opt/fork-fighter-worker
 COPY bin ./bin
 COPY lib ./lib
 
-RUN mkdir -p contract runtime /tmp/fork-fighter-codex \
+RUN mkdir -p contract runtime /home/node/.codex \
   && chmod 0555 bin/propose bin/test-worker \
-  && chown -R node:node /opt/fork-fighter-worker /tmp/fork-fighter-codex \
+  && chown -R node:node /opt/fork-fighter-worker /home/node/.codex \
   && ./bin/test-worker --image-build
 
 USER node
-ENV CODEX_HOME=/tmp/fork-fighter-codex
+ENV CODEX_HOME=/home/node/.codex
 
 CMD ["sleep", "infinity"]

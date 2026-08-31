@@ -305,6 +305,8 @@ export const GameEventSchema = z.discriminatedUnion('type', [
         'spawnBonusCore',
         'modifyRule',
         'adjustExtractionRequirement',
+        'configureRunner',
+        'spawnRunnerHazard',
       ]),
       affectedIds: z.array(IdentifierSchema).max(32),
     })

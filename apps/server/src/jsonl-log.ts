@@ -1,4 +1,5 @@
-import { mkdir, open, readFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
+import { Buffer } from 'node:buffer'
 import { dirname, join } from 'node:path'
 
 import type {
@@ -9,10 +10,23 @@ import type {
 
 export class JsonlMatchLogStore implements MatchLogStore {
   readonly #directory: string
+  readonly #maxBytes: number
+  readonly #maxFiles: number
   readonly #queues = new Map<string, Promise<void>>()
 
-  constructor(directory: string) {
+  constructor(
+    directory: string,
+    options: { maxBytes?: number; maxFiles?: number } = {},
+  ) {
     this.#directory = directory
+    this.#maxBytes = options.maxBytes ?? 8 * 1024 * 1024
+    this.#maxFiles = options.maxFiles ?? 3
+    if (!Number.isSafeInteger(this.#maxBytes) || this.#maxBytes < 1) {
+      throw new Error('maxBytes must be a positive integer')
+    }
+    if (!Number.isSafeInteger(this.#maxFiles) || this.#maxFiles < 1) {
+      throw new Error('maxFiles must be a positive integer')
+    }
   }
 
   async append(entry: MatchLogEntry): Promise<void> {
@@ -20,9 +34,17 @@ export class JsonlMatchLogStore implements MatchLogStore {
     const next = previous.then(async () => {
       const path = this.pathFor(entry.matchId)
       await mkdir(dirname(path), { recursive: true })
+      const line = `${JSON.stringify(entry)}\n`
+      const currentBytes = await this.#size(path)
+      if (
+        currentBytes > 0 &&
+        currentBytes + Buffer.byteLength(line, 'utf8') > this.#maxBytes
+      ) {
+        await this.#rotate(path)
+      }
       const handle = await open(path, 'a', 0o600)
       try {
-        await handle.appendFile(`${JSON.stringify(entry)}\n`, 'utf8')
+        await handle.appendFile(line, 'utf8')
       } finally {
         await handle.close()
       }
@@ -33,18 +55,23 @@ export class JsonlMatchLogStore implements MatchLogStore {
 
   async read(matchId: string): Promise<readonly MatchLogEntry[]> {
     await this.#queues.get(matchId)
-    try {
-      const contents = await readFile(this.pathFor(matchId), 'utf8')
-      return contents
-        .split('\n')
-        .filter((line) => line.length > 0)
-        .map((line) => JSON.parse(line) as MatchLogEntry)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return []
+    const entries: MatchLogEntry[] = []
+    const path = this.pathFor(matchId)
+    for (let index = this.#maxFiles - 1; index >= 0; index -= 1) {
+      const candidate = index === 0 ? path : `${path}.${index}`
+      try {
+        const contents = await readFile(candidate, 'utf8')
+        entries.push(
+          ...contents
+            .split('\n')
+            .filter((line) => line.length > 0)
+            .map((line) => JSON.parse(line) as MatchLogEntry),
+        )
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
-      throw error
     }
+    return entries
   }
 
   async close(): Promise<void> {
@@ -53,6 +80,31 @@ export class JsonlMatchLogStore implements MatchLogStore {
 
   pathFor(matchId: string): string {
     return join(this.#directory, `${matchId}.jsonl`)
+  }
+
+  async #size(path: string): Promise<number> {
+    try {
+      return (await stat(path)).size
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+      throw error
+    }
+  }
+
+  async #rotate(path: string): Promise<void> {
+    if (this.#maxFiles === 1) {
+      await rm(path, { force: true })
+      return
+    }
+    await rm(`${path}.${this.#maxFiles - 1}`, { force: true })
+    for (let index = this.#maxFiles - 2; index >= 1; index -= 1) {
+      try {
+        await rename(`${path}.${index}`, `${path}.${index + 1}`)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    await rename(path, `${path}.1`)
   }
 }
 

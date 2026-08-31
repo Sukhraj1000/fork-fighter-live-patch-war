@@ -32,10 +32,10 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export async function createLiveMatch(): Promise<LiveMatchPayload> {
+export async function createLiveMatch(input: { seed?: number | string } = {}): Promise<LiveMatchPayload> {
   const response = await jsonRequest<{ live: LiveMatchPayload }>(apiUrl('/api/live-matches'), {
     method: 'POST',
-    body: '{}',
+    body: JSON.stringify(input),
   })
   return response.live
 }

@@ -273,10 +273,19 @@ export const defaultCapabilities = MUTATION_CAPABILITIES
 /** Capabilities implemented by the current safe mutation runtime. */
 export const runtimeCapabilities = MutationCapabilityReferenceSchema.parse({
   ...MUTATION_CAPABILITIES,
-  triggers: ['onCoreCollected'],
-  effects: ['spawnCollector'],
+  triggers: ['onActivation', 'onInterval'],
+  effects: ['configureRunner', 'spawnRunnerHazard'],
+  objectives: ['survive'],
   limits: {
     ...MUTATION_CAPABILITIES.limits,
-    maxDurationMs: 30_000,
+    maxDurationMs: 20_000,
+    maxTriggerActivations: 8,
+    maxSpawnedEntities: 8,
+    maxDifficultyCost: 3,
+    minRunnerTelegraphMs: 750,
+    maxRunnerPhysicsDurationMs: 20_000,
+    maxRunnerSpeedMultiplier: 1.25,
+    maxRunnerScaleMultiplier: 1.3,
+    maxRunnerHazardSpeedMultiplier: 1.35,
   },
 })

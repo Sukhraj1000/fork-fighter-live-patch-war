@@ -1,8 +1,10 @@
 # Fork Fighter: Live Patch War
 
 Fork Fighter is an endless 2D score-chaser that keeps playing while three game
-masters draft typed obstacle patches. Survive, collect Fork Shards, and jump
-the traps the Game Masters deploy in real time. One hit ends the run.
+masters draft typed game demands in parallel. They can flip or remove gravity,
+spin or resize the runner, change world speed and style, and throw telegraphed
+boulders, walls, spikes, anvils, rubber ducks, or fork storms. The validator is
+the referee: it rejects unfair demands and permits exactly one live patch.
 
 The default path is completely local: it uses deterministic mock game masters
 and does not require Daytona, provider credentials, or network success.
@@ -25,6 +27,20 @@ Open <http://127.0.0.1:3001>. The runner moves automatically; use Space, W, or
 the Up arrow to jump. Score increases for every moment alive and every Fork
 Shard collected.
 
+For a presentation, use the fixed five-second seeded path and open its labelled
+URL:
+
+```bash
+pnpm demo:seeded
+open 'http://127.0.0.1:3001/?demo=seeded'
+```
+
+The seeded path always shows concurrent drafting, a visible referee rejection,
+one selected patch, an incoming countdown, activation and deterministic cleanup.
+See [the operator runbook](./docs/demo-runbook.md) and
+[two-minute script](./docs/demo-script.md). A separate `pnpm demo:live` command
+runs the truthful Daytona path documented there.
+
 `pnpm play` builds the Phaser/React client and serves it from Fastify. The
 browser sends bounded endless-run stats (survival time, score, shards, and
 death state) to the server, which folds them into compact Game Master context.
@@ -44,8 +60,9 @@ Then run unit, integration, build, and browser smoke coverage with one command:
 pnpm verify
 ```
 
-The browser smoke covers start → live scoring → one-hit death → final score →
-restart. A server integration test also proves that the live match continues
+The browser smoke covers start → live scoring → parallel proposals → referee
+selection → real physics/hazard change → deterministic cleanup → one-hit death
+→ restart. A server integration test also proves that the live match continues
 while provider work runs in parallel.
 
 ## Provider boundary
@@ -87,18 +104,24 @@ unavailable or timeout result; it never blocks play or bypasses validation. See
 
 ## Safety boundary
 
-- The stable Phaser shell owns only the fixed endless-run rules: jump,
-  collision, pickups, scoring, death, and restart.
+- The stable Phaser shell owns the fixed interpreter for jump, collision,
+  pickups, scoring, death, restart, runner-physics profiles, and hazard art.
 - The server owns Game Master orchestration, validation, retained context, and
   the streamed patch lifecycle.
 - Game masters can return only one typed `MutationProposal`.
-- The client translates an accepted mutation through an obstacle-only
-  `ObstaclePatch` contract; agents never write or execute game code.
+- The client translates an accepted mutation through `configureRunner` and
+  `spawnRunnerHazard`; agents choose bounded data but never write or execute
+  game code.
 - Every live proposal passes schema, capability, cleanup, invariant,
   difficulty, novelty, simulation, and playable-runtime checks.
 - Mutation runtime applies and cleans up only capabilities it explicitly
   supports; contract-valid but unavailable effects are visibly rejected.
 - The mock path and game loop do not import or depend on Daytona.
+- Patch difficulty is reserved only while a mutation is live and returned on
+  expiry, so long sessions do not exhaust a lifetime budget.
+- Inactive matches expire after 60 seconds, all matches have a ten-minute hard
+  lifetime, and match logs rotate at 8 MiB with three retained files. Match end
+  closes all three match-scoped Daytona workers.
 
 Read [PROJECT_SPEC.md](./PROJECT_SPEC.md) for the full architecture and product
 intent.
