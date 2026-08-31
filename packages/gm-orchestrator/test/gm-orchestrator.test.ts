@@ -253,6 +253,10 @@ describe('deterministic mock proposal cycle', () => {
       'zero_g',
     )
     assert.equal(
+      configuration?.type === 'configureRunner' ? configuration.rotationMode : undefined,
+      'upright',
+    )
+    assert.equal(
       hazard?.type === 'spawnRunnerHazard' ? hazard.hazard : undefined,
       'falling_anvil',
     )

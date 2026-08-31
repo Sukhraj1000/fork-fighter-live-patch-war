@@ -9,6 +9,8 @@ import {
   type MutationDefinition,
   type MutationProposal,
   type MutationTrigger,
+  type RunnerHazardKind,
+  type RunnerHazardLane,
   type ValidationCheck,
   type ValidationGate,
   type ValidationReason,
@@ -36,6 +38,15 @@ import type {
 } from './types.js'
 
 const IDENTIFIER = /^[a-z0-9][a-z0-9:_-]*$/
+
+const RUNNER_HAZARD_LANES: Readonly<Record<RunnerHazardKind, readonly RunnerHazardLane[]>> = {
+  rolling_boulder: ['ground'],
+  spike_row: ['ground', 'ceiling'],
+  moving_wall: ['ground', 'air'],
+  falling_anvil: ['air', 'ceiling'],
+  rubber_duck: ['ground', 'air'],
+  fork_storm: ['air', 'ceiling'],
+}
 
 const CHECK_MESSAGES: Readonly<
   Record<ValidationGate, Readonly<{ passed: string; failed: string }>>
@@ -383,6 +394,15 @@ function capabilityReasons(
           ),
         )
       }
+      if (effect.gravityMode === 'zero_g' && effect.rotationMode !== 'upright') {
+        reasons.push(
+          reason(
+            'runner-zero-gravity-orientation',
+            'Zero-gravity mutations must keep the runner upright so controls and collisions remain readable.',
+            path,
+          ),
+        )
+      }
       const noOp =
         effect.gravityMode === 'normal' &&
         effect.rotationMode === 'upright' &&
@@ -401,6 +421,15 @@ function capabilityReasons(
       }
     }
     if (effect.type === 'spawnRunnerHazard') {
+      if (!RUNNER_HAZARD_LANES[effect.hazard].includes(effect.lane)) {
+        reasons.push(
+          reason(
+            'runner-hazard-lane-incompatible',
+            'Runner hazard geometry is incompatible with the requested lane.',
+            path,
+          ),
+        )
+      }
       if (trigger.type !== 'onActivation' && trigger.type !== 'onInterval') {
         reasons.push(
           reason(

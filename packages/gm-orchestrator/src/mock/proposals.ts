@@ -92,7 +92,7 @@ export function createGremlinMockProposal(
       id: `mock:gremlin:${cycle}`,
       title: zeroGravity ? 'Zero-G Anvil Disco' : 'Upside-Down Fork Storm',
       patchNote: zeroGravity
-        ? 'Gravity disappears, the runner spins, and anvils drift through the air lane.'
+        ? 'Gravity disappears while the upright runner dodges anvils drifting through the air lane.'
         : 'Gravity flips and a telegraphed fork storm attacks the ceiling lane.',
       author: 'gremlin',
       durationMs: 12_000,
@@ -108,7 +108,7 @@ export function createGremlinMockProposal(
               jumpMultiplier: zeroGravity ? 1.1 : 0.9,
               speedMultiplier: 1,
               scaleMultiplier: 0.9,
-              rotationMode: zeroGravity ? 'spin' : 'flipped',
+              rotationMode: zeroGravity ? 'upright' : 'flipped',
               worldStyle: zeroGravity ? 'neon' : 'void',
               tag: runnerTag,
             },
@@ -138,7 +138,7 @@ export function createGremlinMockProposal(
       ],
     },
     summary: zeroGravity
-      ? 'Combines zero gravity, a spinning runner, and a bounded anvil barrage.'
+      ? 'Combines readable zero gravity with a bounded anvil barrage.'
       : 'Combines a bounded gravity inversion with a visible fork barrage.',
     expectedImpact: 'Forces a dramatic control adaptation while preserving warning time.',
   })

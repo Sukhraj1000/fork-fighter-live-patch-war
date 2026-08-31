@@ -28,6 +28,7 @@ const JUMP_VELOCITY = -770
 const START_GRACE_MS = 1_800
 const COLLISION_TUTORIAL_MS = 25_000
 const JUMP_BUFFER_MS = 150
+const MIN_HAZARD_SPACING_MS = 750
 const RUNNER_ACTION_TEXTURE = 'fork-fighter-runner'
 const RUNNER_RUN_TEXTURE = 'fork-fighter-run-cycle'
 const RUNNER_HIT_TEXTURE = 'fork-fighter-hit'
@@ -60,6 +61,7 @@ type MovingObstacle = {
   width: number
   height: number
   kind: ObstacleKind
+  lane: SpawnRunnerHazardEffect['lane']
   author: GameMasterPersona
   title: string
   phase: number
@@ -316,7 +318,7 @@ export class RunnerScene extends Phaser.Scene {
       const obstacle = this.obstacles[index]
       obstacle.view.x -= speed * obstacle.speedMultiplier * (deltaMs / 1_000)
       if (obstacle.kind === 'moving_wall') {
-        obstacle.view.y = obstacle.baseY + Math.sin(this.elapsedMs / 180 + obstacle.phase) * 18
+        obstacle.view.y = this.laneAwareBob(obstacle, 18, 180)
       }
       if (obstacle.kind === 'rolling_boulder') {
         obstacle.view.rotation -= deltaMs / 230
@@ -328,11 +330,11 @@ export class RunnerScene extends Phaser.Scene {
         )
       }
       if (obstacle.kind === 'rubber_duck') {
-        obstacle.view.y = obstacle.baseY + Math.sin(this.elapsedMs / 135 + obstacle.phase) * 28
+        obstacle.view.y = this.laneAwareBob(obstacle, 24, 135)
         obstacle.view.rotation = Math.sin(this.elapsedMs / 240 + obstacle.phase) * 0.18
       }
       if (obstacle.kind === 'fork_storm') {
-        obstacle.view.y = obstacle.baseY + Math.sin(this.elapsedMs / 95 + obstacle.phase) * 20
+        obstacle.view.y = this.laneAwareBob(obstacle, 20, 95)
         obstacle.view.rotation += deltaMs / 120
       }
       if (obstacle.view.x < -100) {
@@ -340,6 +342,17 @@ export class RunnerScene extends Phaser.Scene {
         this.obstacles.splice(index, 1)
       }
     }
+  }
+
+  private laneAwareBob(obstacle: MovingObstacle, amplitude: number, periodMs: number) {
+    const wave = Math.sin(this.elapsedMs / periodMs + obstacle.phase)
+    if (obstacle.lane === 'ground') {
+      return obstacle.baseY - ((wave + 1) / 2) * amplitude
+    }
+    if (obstacle.lane === 'ceiling') {
+      return obstacle.baseY + ((wave + 1) / 2) * amplitude
+    }
+    return obstacle.baseY + wave * amplitude
   }
 
   private updatePickups(deltaMs: number) {
@@ -435,23 +448,24 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private applyRunnerConfiguration(effect: ConfigureRunnerEffect) {
+    const rotationMode = effect.gravityMode === 'zero_g' ? 'upright' : effect.rotationMode
     this.runnerConfiguration = {
       gravityMode: effect.gravityMode,
       jumpMultiplier: effect.jumpMultiplier,
       speedMultiplier: effect.speedMultiplier,
       scaleMultiplier: effect.scaleMultiplier,
-      rotationMode: effect.rotationMode,
+      rotationMode,
       worldStyle: effect.worldStyle,
     }
     this.collisionGraceMs = Math.max(this.collisionGraceMs, 900)
     this.velocityY = 0
+    this.clearObstacles()
     if (this.player) {
-      this.player.y =
-        effect.gravityMode === 'inverted'
-          ? PLAYER_CEILING_Y
-          : effect.gravityMode === 'zero_g'
-            ? (PLAYER_GROUND_Y + PLAYER_CEILING_Y) / 2
-            : PLAYER_GROUND_Y
+      if (effect.gravityMode === 'inverted') this.player.y = PLAYER_CEILING_Y
+      if (effect.gravityMode !== 'zero_g' && effect.gravityMode !== 'inverted') {
+        this.player.y = PLAYER_GROUND_Y
+      }
+      this.player.setRotation(0)
     }
 
     const styles: Record<RunnerConfiguration['worldStyle'], { color: number; alpha: number }> = {
@@ -464,7 +478,7 @@ export class RunnerScene extends Phaser.Scene {
     this.mutationOverlay?.setFillStyle(style.color).setAlpha(style.alpha)
     this.cameras.main.flash(180, 121, 215, 255, false)
     this.game.canvas.dataset.runnerGravity = effect.gravityMode
-    this.game.canvas.dataset.runnerRotation = effect.rotationMode
+    this.game.canvas.dataset.runnerRotation = rotationMode
     this.game.canvas.dataset.worldStyle = effect.worldStyle
   }
 
@@ -474,10 +488,13 @@ export class RunnerScene extends Phaser.Scene {
   ) {
     this.showHazardSignal(effect)
     this.game.canvas.dataset.hazardKind = effect.hazard
+    this.game.canvas.dataset.hazardLane = effect.lane
+    const spacingMs = Math.max(effect.spacingMs, MIN_HAZARD_SPACING_MS)
+    this.game.canvas.dataset.hazardSpacingMs = String(spacingMs)
     const warning = this.time.delayedCall(effect.telegraphMs, () => {
       if (!this.alive || this.activeRunnerMutation?.id !== patch.id) return
       for (let index = 0; index < effect.count; index += 1) {
-        const timer = this.time.delayedCall(index * effect.spacingMs, () => {
+        const timer = this.time.delayedCall(index * spacingMs, () => {
           if (this.alive && this.activeRunnerMutation?.id === patch.id) {
             this.spawnObstacle(obstaclePatchFromWave(patch, effect))
           }
@@ -511,9 +528,16 @@ export class RunnerScene extends Phaser.Scene {
     }
     delete this.game.canvas.dataset.activeMutation
     delete this.game.canvas.dataset.hazardKind
+    delete this.game.canvas.dataset.hazardLane
+    delete this.game.canvas.dataset.hazardSpacingMs
     this.game.canvas.dataset.runnerGravity = 'normal'
     this.game.canvas.dataset.runnerRotation = 'upright'
     this.game.canvas.dataset.worldStyle = 'normal'
+  }
+
+  private clearObstacles() {
+    for (const obstacle of this.obstacles) obstacle.view.destroy()
+    this.obstacles = []
   }
 
   private spawnObstacle(patch: ObstaclePatch) {
@@ -613,6 +637,7 @@ export class RunnerScene extends Phaser.Scene {
       width,
       height,
       kind: patch.obstacle,
+      lane: patch.lane,
       author: patch.author,
       title: patch.title,
       phase: Math.random() * Math.PI,

@@ -101,6 +101,8 @@ test('the referee-selected demand changes and then restores live runner physics'
 
   await expect(canvas).toHaveAttribute('data-runner-gravity', 'inverted')
   await expect(canvas).toHaveAttribute('data-hazard-kind', 'fork_storm')
+  await expect(canvas).toHaveAttribute('data-hazard-lane', 'ceiling')
+  await expect(canvas).toHaveAttribute('data-hazard-spacing-ms', '750')
   await expect(page.getByTestId('patch-card')).toContainText(/Upside-Down Fork Storm/i)
   await expect(page.getByTestId('patch-demands')).toContainText(/inverted gravity/i)
   await expect(page.getByTestId('patch-demands')).toContainText(/fork storm/i)
