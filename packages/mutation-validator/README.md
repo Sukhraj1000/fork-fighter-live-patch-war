@@ -17,6 +17,11 @@ Only proposals that pass every gate receive a score. Selection sorts candidates
 canonically, ranks valid scores, and uses proposal and mutation identifiers as
 stable tie-breakers, so input ordering cannot change the winner.
 
+For runner demands the capability gate also acts as a game referee: physics may
+change only once per patch, warnings must meet the minimum reaction window,
+interval waves cannot overlap, speed/scale/duration are capped, no-op demands
+are rejected, and the global one-live-patch limit remains authoritative.
+
 ```ts
 import {
   selectMutationProposal,

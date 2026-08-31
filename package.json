@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "pnpm --filter @fork-fighter/server dev",
     "play": "pnpm run build:e2e && pnpm --filter @fork-fighter/server dev",
+    "demo:seeded": "pnpm run build:e2e && GAME_MASTER_PROVIDER=mock MATCH_PATCH_CADENCE_MS=5000 MATCH_PROPOSAL_DEADLINE_MS=2000 MOCK_AGENT_DELAY_MS=500 MOCK_MUTATION_DURATION_MS=8000 pnpm --filter @fork-fighter/server dev",
+    "demo:live": "pnpm run build:e2e && GAME_MASTER_PROVIDER=daytona MATCH_PATCH_CADENCE_MS=21000 MATCH_PROPOSAL_DEADLINE_MS=20000 pnpm --filter @fork-fighter/server dev",
     "daytona:smoke": "node --import tsx src/index.ts",
     "build": "pnpm run build:root && pnpm --recursive --if-present run build",
     "build:e2e": "pnpm --filter @fork-fighter/web build",

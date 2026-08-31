@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { Daytona, Image, type DaytonaConfig, type Snapshot } from '@daytona/sdk'
 
 export const DEFAULT_DAYTONA_WORKER_SNAPSHOT =
-  'fork-fighter-game-master-codex-v4'
+  'fork-fighter-game-master-codex-v9'
 
 export interface PrepareWorkerSnapshotOptions {
   readonly name?: string

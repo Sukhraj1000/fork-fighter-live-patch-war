@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import {
   MatchDirectorContextSchema,
   MutationProposalSchema,
+  upsideDownForkStormMutationFixture,
 } from '@fork-fighter/contracts'
 
 import {
@@ -70,6 +71,118 @@ describe('mutation validation gates', () => {
     )
     assert.ok(result.checks.every(({ status }) => status === 'passed'))
     assert.ok(Number.isFinite(result.score))
+  })
+
+  it('accepts a telegraphed reversible gravity flip and fork storm', () => {
+    const proposal = MutationProposalSchema.parse({
+      proposalId: 'proposal-upside-down-fork-storm',
+      requestId: 'request-runner-chaos',
+      author: 'gremlin',
+      mutation: upsideDownForkStormMutationFixture,
+      summary: 'Flips gravity and sends a bounded fork wave through the ceiling lane.',
+      expectedImpact: 'Creates a visible control remix with advance warning and full cleanup.',
+    })
+    const result = validateMutationProposal({
+      proposal,
+      context: validatorContextFixture,
+      gameState: validatorGameStateFixture,
+    })
+
+    assert.equal(result.valid, true)
+    if (!result.valid) return
+    assert.ok(result.score > 0)
+  })
+
+  it('rejects runner hazards that do not meet the referee warning window', () => {
+    const mutation = structuredClone(upsideDownForkStormMutationFixture)
+    const trigger = mutation.triggers[1]
+    assert.equal(trigger?.type, 'onInterval')
+    if (trigger?.type !== 'onInterval') return
+    const effect = trigger.effects[0]
+    assert.equal(effect?.type, 'spawnRunnerHazard')
+    if (effect?.type !== 'spawnRunnerHazard') return
+    effect.telegraphMs = 650
+    const proposal = MutationProposalSchema.parse({
+      proposalId: 'proposal-unsafe-fork-storm',
+      requestId: 'request-unsafe-runner-chaos',
+      author: 'gremlin',
+      mutation,
+      summary: 'Attempts a barely telegraphed wave.',
+      expectedImpact: 'Would not give the player enough reaction time.',
+    })
+    const result = validateMutationProposal({
+      proposal,
+      context: validatorContextFixture,
+      gameState: validatorGameStateFixture,
+    })
+
+    assert.equal(result.valid, false)
+    if (result.valid) return
+    assert.equal(result.checks.at(-1)?.gate, 'capability')
+    assert.ok(result.reasons.some(({ code }) => code === 'runner-hazard-policy-limit'))
+  })
+
+  it('rejects an unreadable zero-gravity runner rotation', () => {
+    const mutation = structuredClone(upsideDownForkStormMutationFixture)
+    const trigger = mutation.triggers[0]
+    assert.equal(trigger?.type, 'onActivation')
+    if (trigger?.type !== 'onActivation') return
+    const effect = trigger.effects[0]
+    assert.equal(effect?.type, 'configureRunner')
+    if (effect?.type !== 'configureRunner') return
+    effect.gravityMode = 'zero_g'
+    effect.rotationMode = 'spin'
+    const proposal = MutationProposalSchema.parse({
+      proposalId: 'proposal-unreadable-zero-gravity',
+      requestId: 'request-unreadable-zero-gravity',
+      author: 'gremlin',
+      mutation,
+      summary: 'Attempts to spin the runner continuously in zero gravity.',
+      expectedImpact: 'Would make the runner orientation and collision state unclear.',
+    })
+
+    const result = validateMutationProposal({
+      proposal,
+      context: validatorContextFixture,
+      gameState: validatorGameStateFixture,
+    })
+
+    assert.equal(result.valid, false)
+    if (result.valid) return
+    assert.ok(
+      result.reasons.some(({ code }) => code === 'runner-zero-gravity-orientation'),
+    )
+  })
+
+  it('rejects hazard geometry placed in an incompatible lane', () => {
+    const mutation = structuredClone(upsideDownForkStormMutationFixture)
+    const trigger = mutation.triggers[1]
+    assert.equal(trigger?.type, 'onInterval')
+    if (trigger?.type !== 'onInterval') return
+    const effect = trigger.effects[0]
+    assert.equal(effect?.type, 'spawnRunnerHazard')
+    if (effect?.type !== 'spawnRunnerHazard') return
+    effect.lane = 'ground'
+    const proposal = MutationProposalSchema.parse({
+      proposalId: 'proposal-grounded-fork-storm',
+      requestId: 'request-grounded-fork-storm',
+      author: 'gremlin',
+      mutation,
+      summary: 'Attempts to place a rotating fork storm in the ground lane.',
+      expectedImpact: 'Would merge animated fork geometry into the floor.',
+    })
+
+    const result = validateMutationProposal({
+      proposal,
+      context: validatorContextFixture,
+      gameState: validatorGameStateFixture,
+    })
+
+    assert.equal(result.valid, false)
+    if (result.valid) return
+    assert.ok(
+      result.reasons.some(({ code }) => code === 'runner-hazard-lane-incompatible'),
+    )
   })
 
   it('does not mutate proposal, context, or game state inputs', () => {

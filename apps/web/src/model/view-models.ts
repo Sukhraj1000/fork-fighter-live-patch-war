@@ -1,4 +1,7 @@
-import type { PlayerCommand as CorePlayerCommand } from '@fork-fighter/contracts'
+import type {
+  MutationDefinition,
+  PlayerCommand as CorePlayerCommand,
+} from '@fork-fighter/contracts'
 
 export type PatchStatus =
   | 'idle'
@@ -60,6 +63,7 @@ export type PatchViewModel = {
   durationSeconds: number
   countdownSeconds?: number
   difficulty: number
+  mutation?: MutationDefinition
 }
 
 /**

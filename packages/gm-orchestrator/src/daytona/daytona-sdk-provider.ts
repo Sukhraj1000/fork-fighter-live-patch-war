@@ -63,7 +63,7 @@ const ALLOWED_WRITE_PATHS = new Set([
   `${DAYTONA_WORKER_ROOT}/runtime/prompt.txt`,
 ])
 const PROPOSAL_PATH = `${DAYTONA_WORKER_ROOT}/runtime/proposal.json`
-const CODEX_AUTH_PATH = '/tmp/fork-fighter-codex/auth.json'
+const CODEX_AUTH_PATH = '/home/node/.codex/auth.json'
 const ALLOWED_COMMANDS = new Set([
   DAYTONA_WORKER_HEALTH_COMMAND,
   DAYTONA_WORKER_PROPOSAL_COMMAND,

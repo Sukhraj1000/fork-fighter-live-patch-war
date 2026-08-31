@@ -7,6 +7,7 @@ import {
   MutationDefinitionSchema,
   canonicalMockGameState,
   debtCollectorMutationFixture as canonicalDebtCollector,
+  upsideDownForkStormMutationFixture,
   type GameEvent,
   type MutationDefinition,
 } from '@fork-fighter/contracts'
@@ -85,6 +86,71 @@ describe('Debt Collector fixture', () => {
 })
 
 describe('mutation lifecycle', () => {
+  it('applies runner physics, emits bounded interval waves, and cleans everything', () => {
+    const activated = activateMutation(
+      createMutationRuntimeState(),
+      upsideDownForkStormMutationFixture,
+      { tick: 0, atMs: 0 },
+    )
+    assert.deepEqual(activated.events.map(({ type }) => type), [
+      'patch_activated',
+      'patch_effect_applied',
+    ])
+    assert.deepEqual(activated.events[1], {
+      type: 'patch_effect_applied',
+      tick: 0,
+      atMs: 0,
+      mutationId: 'upside-down-fork-storm',
+      triggerId: 'flip-runner',
+      effect: 'configureRunner',
+      affectedIds: ['runner-player'],
+    })
+
+    const firstWave = advanceMutationRuntime(activated.state, {
+      tick: 60,
+      atMs: 3_000,
+    })
+    assert.deepEqual(firstWave.events[0], {
+      type: 'patch_effect_applied',
+      tick: 60,
+      atMs: 3_000,
+      mutationId: 'upside-down-fork-storm',
+      triggerId: 'rain-forks',
+      effect: 'spawnRunnerHazard',
+      affectedIds: ['runner-hazard:000001'],
+    })
+    const secondWave = advanceMutationRuntime(firstWave.state, {
+      tick: 120,
+      atMs: 6_000,
+    })
+    const thirdWave = advanceMutationRuntime(secondWave.state, {
+      tick: 180,
+      atMs: 9_000,
+    })
+    assert.equal(thirdWave.state.activeMutation?.triggerActivations[1]?.count, 3)
+
+    const expired = advanceMutationRuntime(thirdWave.state, {
+      tick: 240,
+      atMs: 12_000,
+    })
+    assert.equal(expired.state.activeMutation, null)
+    assert.deepEqual(expired.events, [
+      {
+        type: 'patch_expired',
+        tick: 240,
+        atMs: 12_000,
+        mutationId: 'upside-down-fork-storm',
+        cleanedTags: [
+          'upside-down-fork-storm:runner',
+          'upside-down-fork-storm:forks',
+        ],
+      },
+    ])
+    for (const event of [...activated.events, ...firstWave.events, ...expired.events]) {
+      assert.doesNotThrow(() => GameEventSchema.parse(event))
+    }
+  })
+
   it('activates at an explicit deterministic boundary', () => {
     const input = createMutationRuntimeState()
     const first = activateMutation(input, debtCollectorFixture, {
@@ -262,7 +328,7 @@ describe('runtime boundary safety', () => {
     assert.deepEqual(input, createMutationRuntimeState())
   })
 
-  it('rejects contract-valid capabilities outside the first runtime slice', () => {
+  it('rejects unsupported trigger and effect combinations', () => {
     const unsupported = structuredClone(debtCollectorFixture) as unknown as Record<
       string,
       unknown
@@ -285,7 +351,7 @@ describe('runtime boundary safety', () => {
         }),
       (error: unknown) =>
         error instanceof MutationRuntimeError &&
-        error.code === 'unsupported_trigger',
+        error.code === 'unsupported_effect',
     )
   })
 

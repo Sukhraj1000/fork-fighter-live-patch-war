@@ -74,12 +74,76 @@ export const AdjustExtractionRequirementEffectSchema = z
   })
   .strict()
 
+export const RunnerGravityModeSchema = z.enum([
+  'normal',
+  'moon',
+  'inverted',
+  'zero_g',
+])
+
+export const RunnerRotationModeSchema = z.enum([
+  'upright',
+  'flipped',
+  'spin',
+])
+
+export const RunnerWorldStyleSchema = z.enum([
+  'normal',
+  'neon',
+  'void',
+  'sunset',
+])
+
+export const RunnerHazardKindSchema = z.enum([
+  'rolling_boulder',
+  'spike_row',
+  'moving_wall',
+  'falling_anvil',
+  'rubber_duck',
+  'fork_storm',
+])
+
+export const RunnerHazardLaneSchema = z.enum(['ground', 'air', 'ceiling'])
+
+/**
+ * A bounded, reversible change to the endless-runner physics and presentation.
+ * Game Masters choose values; the browser executes only this fixed vocabulary.
+ */
+export const ConfigureRunnerEffectSchema = z
+  .object({
+    type: z.literal('configureRunner'),
+    gravityMode: RunnerGravityModeSchema,
+    jumpMultiplier: FiniteNumberSchema.min(0.75).max(1.35),
+    speedMultiplier: FiniteNumberSchema.min(0.75).max(1.35),
+    scaleMultiplier: FiniteNumberSchema.min(0.7).max(1.4),
+    rotationMode: RunnerRotationModeSchema,
+    worldStyle: RunnerWorldStyleSchema,
+    tag: IdentifierSchema,
+  })
+  .strict()
+
+/** A telegraphed, count-bounded wave rendered by the endless runner. */
+export const SpawnRunnerHazardEffectSchema = z
+  .object({
+    type: z.literal('spawnRunnerHazard'),
+    hazard: RunnerHazardKindSchema,
+    lane: RunnerHazardLaneSchema,
+    count: PositiveIntegerSchema.max(MAX_SPAWN_COUNT_PER_EFFECT),
+    spacingMs: PositiveIntegerSchema.min(350).max(2_000),
+    speedMultiplier: FiniteNumberSchema.min(0.65).max(1.5),
+    telegraphMs: PositiveIntegerSchema.min(600).max(2_000),
+    tag: IdentifierSchema,
+  })
+  .strict()
+
 export const MutationEffectSchema = z.discriminatedUnion('type', [
   SpawnCollectorEffectSchema,
   RelocateHazardEffectSchema,
   SpawnBonusCoreEffectSchema,
   ModifyRuleEffectSchema,
   AdjustExtractionRequirementEffectSchema,
+  ConfigureRunnerEffectSchema,
+  SpawnRunnerHazardEffectSchema,
 ])
 
 const effectsSchema = z
@@ -237,7 +301,10 @@ function requiredCleanupType(
       return 'restoreEntitiesByTag'
     case 'modifyRule':
     case 'adjustExtractionRequirement':
+    case 'configureRunner':
       return 'restoreRulesByTag'
+    case 'spawnRunnerHazard':
+      return 'removeEntitiesByTag'
   }
 }
 
@@ -265,7 +332,11 @@ export const MutationDefinitionSchema = MutationDefinitionBaseSchema.superRefine
       }
 
       trigger.effects.forEach((effect) => {
-        if (effect.type === 'spawnCollector' || effect.type === 'spawnBonusCore') {
+        if (
+          effect.type === 'spawnCollector' ||
+          effect.type === 'spawnBonusCore' ||
+          effect.type === 'spawnRunnerHazard'
+        ) {
           spawnedPerActivation += effect.count
         }
         requiredCleanups.add(`${effect.tag}:${requiredCleanupType(effect)}`)
@@ -316,6 +387,8 @@ export const MutationCapabilityReferenceSchema = z
         'spawnBonusCore',
         'modifyRule',
         'adjustExtractionRequirement',
+        'configureRunner',
+        'spawnRunnerHazard',
       ]),
     ),
     objectives: z.array(
@@ -329,6 +402,12 @@ export const MutationCapabilityReferenceSchema = z
         maxSpawnCountPerEffect: PositiveIntegerSchema,
         maxTriggerActivations: PositiveIntegerSchema,
         maxSpawnedEntities: PositiveIntegerSchema,
+        maxDifficultyCost: FiniteNumberSchema.positive(),
+        minRunnerTelegraphMs: PositiveIntegerSchema,
+        maxRunnerPhysicsDurationMs: PositiveIntegerSchema,
+        maxRunnerSpeedMultiplier: FiniteNumberSchema.positive(),
+        maxRunnerScaleMultiplier: FiniteNumberSchema.positive(),
+        maxRunnerHazardSpeedMultiplier: FiniteNumberSchema.positive(),
       })
       .strict(),
   })
@@ -348,6 +427,8 @@ export const MUTATION_CAPABILITIES = MutationCapabilityReferenceSchema.parse({
     'spawnBonusCore',
     'modifyRule',
     'adjustExtractionRequirement',
+    'configureRunner',
+    'spawnRunnerHazard',
   ],
   objectives: ['bankAdditionalCores', 'collectRiskyCores', 'survive'],
   limits: {
@@ -357,6 +438,12 @@ export const MUTATION_CAPABILITIES = MutationCapabilityReferenceSchema.parse({
     maxSpawnCountPerEffect: MAX_SPAWN_COUNT_PER_EFFECT,
     maxTriggerActivations: MAX_TRIGGER_ACTIVATIONS,
     maxSpawnedEntities: MAX_SPAWNED_ENTITIES,
+    maxDifficultyCost: 5,
+    minRunnerTelegraphMs: 600,
+    maxRunnerPhysicsDurationMs: MAX_MUTATION_DURATION_MS,
+    maxRunnerSpeedMultiplier: 1.35,
+    maxRunnerScaleMultiplier: 1.4,
+    maxRunnerHazardSpeedMultiplier: 1.5,
   },
 })
 
@@ -368,6 +455,15 @@ export type ModifyRuleEffect = z.infer<typeof ModifyRuleEffectSchema>
 export type AdjustExtractionRequirementEffect = z.infer<
   typeof AdjustExtractionRequirementEffectSchema
 >
+export type ConfigureRunnerEffect = z.infer<typeof ConfigureRunnerEffectSchema>
+export type SpawnRunnerHazardEffect = z.infer<
+  typeof SpawnRunnerHazardEffectSchema
+>
+export type RunnerGravityMode = z.infer<typeof RunnerGravityModeSchema>
+export type RunnerRotationMode = z.infer<typeof RunnerRotationModeSchema>
+export type RunnerWorldStyle = z.infer<typeof RunnerWorldStyleSchema>
+export type RunnerHazardKind = z.infer<typeof RunnerHazardKindSchema>
+export type RunnerHazardLane = z.infer<typeof RunnerHazardLaneSchema>
 export type MutationEffect = z.infer<typeof MutationEffectSchema>
 export type OnActivationTrigger = z.infer<typeof OnActivationTriggerSchema>
 export type OnCoreCollectedTrigger = z.infer<

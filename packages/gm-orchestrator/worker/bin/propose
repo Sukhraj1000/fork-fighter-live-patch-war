@@ -31,6 +31,7 @@ codex exec \
   --skip-git-repo-check \
   --color never \
   "$@" \
+  -c model_reasoning_effort='"none"' \
   -c shell_environment_policy.inherit=none \
   --output-schema contract/mutation-proposal.schema.json \
   --output-last-message runtime/proposal.json \

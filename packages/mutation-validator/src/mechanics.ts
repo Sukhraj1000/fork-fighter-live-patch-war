@@ -36,7 +36,10 @@ export function requiredCleanupType(
       return 'restoreEntitiesByTag'
     case 'modifyRule':
     case 'adjustExtractionRequirement':
+    case 'configureRunner':
       return 'restoreRulesByTag'
+    case 'spawnRunnerHazard':
+      return 'removeEntitiesByTag'
   }
 }
 
@@ -52,6 +55,20 @@ function effectMechanic(effect: MutationEffect): string {
       return `${effect.type}:${effect.rule}:${effect.value < 1 ? 'down' : effect.value > 1 ? 'up' : 'same'}`
     case 'adjustExtractionRequirement':
       return `${effect.type}:up`
+    case 'configureRunner':
+      return [
+        effect.type,
+        effect.gravityMode,
+        effect.rotationMode,
+        effect.worldStyle,
+        effect.speedMultiplier < 1
+          ? 'slow'
+          : effect.speedMultiplier > 1
+            ? 'fast'
+            : 'steady',
+      ].join(':')
+    case 'spawnRunnerHazard':
+      return `${effect.type}:${effect.hazard}:${effect.lane}`
   }
 }
 
@@ -140,6 +157,31 @@ export function estimateMutationPressure(mutation: MutationDefinition): number {
       case 'adjustExtractionRequirement':
         pressure += effect.additionalBankedCores * 0.75
         break
+      case 'configureRunner': {
+        const gravityPressure =
+          effect.gravityMode === 'inverted'
+            ? 1.1
+            : effect.gravityMode === 'zero_g'
+              ? 0.75
+              : effect.gravityMode === 'moon'
+                ? 0.25
+                : 0
+        pressure += gravityPressure
+        pressure += Math.max(0, effect.speedMultiplier - 1) * 2.5
+        pressure += Math.max(0, effect.scaleMultiplier - 1) * 1.5
+        pressure += Math.max(0, 1 - effect.jumpMultiplier) * 1.2
+        break
+      }
+      case 'spawnRunnerHazard': {
+        const hazardWeight =
+          effect.hazard === 'falling_anvil' || effect.hazard === 'fork_storm'
+            ? 0.8
+            : effect.hazard === 'rubber_duck'
+              ? 0.4
+              : 0.6
+        pressure += effect.count * hazardWeight * effect.speedMultiplier
+        break
+      }
     }
   }
   if (mutation.objective) pressure += 0.2
@@ -163,6 +205,7 @@ export function scoreMutation(
   const effectTypes = new Set(
     mutationEffectEntries(mutation).map(({ effect }) => effect.type),
   )
+  const effects = mutationEffectEntries(mutation).map(({ effect }) => effect)
   let playValue = effectTypes.size * 4 + (mutation.objective ? 8 : 0)
 
   if (
@@ -177,6 +220,26 @@ export function scoreMutation(
       mutation.objective?.type === 'collectRiskyCores')
   ) {
     playValue += 7
+  }
+  if (effectTypes.has('configureRunner')) playValue += 12
+  if (effectTypes.has('spawnRunnerHazard')) playValue += 10
+  if (
+    effects.some(
+      (effect) =>
+        effect.type === 'configureRunner' &&
+        (effect.gravityMode === 'inverted' || effect.gravityMode === 'zero_g'),
+    )
+  ) {
+    playValue += 12
+  }
+  if (
+    effects.some(
+      (effect) =>
+        effect.type === 'spawnRunnerHazard' &&
+        ['falling_anvil', 'rubber_duck', 'fork_storm'].includes(effect.hazard),
+    )
+  ) {
+    playValue += 8
   }
   if (context.telemetry.challengeTrend === 'too_hard' && pressure <= 0) {
     playValue += 8

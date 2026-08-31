@@ -40,6 +40,8 @@ export class LiveGameStateStore {
 
 interface LiveMatchSession {
   matchId: string
+  createdAtMs: number
+  lastActivityAtMs: number
   game: GameState
   runtime: MutationRuntimeState
   batches: GameEventBatch[]
@@ -79,6 +81,11 @@ export interface CreateLiveMatchInput {
 export interface LiveMatchCoordinatorOptions {
   autoTick?: boolean
   telemetryEveryTicks?: number
+  autoSweep?: boolean
+  idleTimeoutMs?: number
+  maxLifetimeMs?: number
+  sweepEveryMs?: number
+  now?: () => number
 }
 
 export class LiveMatchCoordinator {
@@ -87,6 +94,11 @@ export class LiveMatchCoordinator {
   readonly #sessions = new Map<string, LiveMatchSession>()
   readonly #autoTick: boolean
   readonly #telemetryEveryTicks: number
+  readonly #idleTimeoutMs: number
+  readonly #maxLifetimeMs: number
+  readonly #now: () => number
+  #sweepTimer?: NodeJS.Timeout
+  #sweeping = false
 
   constructor(
     host: MatchHost,
@@ -97,6 +109,23 @@ export class LiveMatchCoordinator {
     this.#gameStates = gameStates
     this.#autoTick = options.autoTick ?? true
     this.#telemetryEveryTicks = options.telemetryEveryTicks ?? 10
+    this.#idleTimeoutMs = options.idleTimeoutMs ?? 60_000
+    this.#maxLifetimeMs = options.maxLifetimeMs ?? 10 * 60_000
+    this.#now = options.now ?? Date.now
+    const sweepEveryMs = options.sweepEveryMs ?? Math.min(30_000, this.#idleTimeoutMs)
+    if (
+      this.#idleTimeoutMs <= 0 ||
+      this.#maxLifetimeMs <= 0 ||
+      sweepEveryMs <= 0
+    ) {
+      throw new Error('Live match lifecycle durations must be positive.')
+    }
+    if (options.autoSweep !== false) {
+      this.#sweepTimer = setInterval(() => {
+        void this.sweepStaleSessions().catch(() => undefined)
+      }, sweepEveryMs)
+      this.#sweepTimer.unref()
+    }
   }
 
   async create(input: CreateLiveMatchInput): Promise<LiveMatchSnapshot> {
@@ -112,8 +141,11 @@ export class LiveMatchCoordinator {
       toTick: started.state.tick,
       events: started.events,
     })
+    const now = this.#now()
     const session: LiveMatchSession = {
       matchId: input.matchId,
+      createdAtMs: now,
+      lastActivityAtMs: now,
       game: started.state,
       runtime: createMutationRuntimeState(),
       batches: [initialBatch],
@@ -168,6 +200,7 @@ export class LiveMatchCoordinator {
       throw new MatchHostError('match_ended', 409, 'Match has ended.')
     }
     const command = PlayerCommandSchema.parse(input)
+    session.lastActivityAtMs = this.#now()
     session.queuedCommands.push(command)
     if (session.queuedCommands.length > MAX_QUEUED_COMMANDS) {
       session.queuedCommands.splice(0, session.queuedCommands.length - MAX_QUEUED_COMMANDS)
@@ -184,12 +217,14 @@ export class LiveMatchCoordinator {
       throw new MatchHostError('match_ended', 409, 'Match has ended.')
     }
     session.runnerTelemetry = telemetry
+    session.lastActivityAtMs = this.#now()
     await this.#publishTelemetry(session)
     return this.getSnapshot(matchId)
   }
 
   async step(matchId: string, command?: PlayerCommand): Promise<LiveMatchSnapshot> {
     const session = this.#session(matchId)
+    session.lastActivityAtMs = this.#now()
     if (command) session.queuedCommands.push(PlayerCommandSchema.parse(command))
     await this.#tick(session)
     return this.getSnapshot(matchId)
@@ -206,9 +241,33 @@ export class LiveMatchCoordinator {
   }
 
   async close(): Promise<void> {
+    if (this.#sweepTimer) clearInterval(this.#sweepTimer)
+    this.#sweepTimer = undefined
     for (const session of this.#sessions.values()) {
       this.#stopTicker(session)
       session.closed = true
+    }
+  }
+
+  async sweepStaleSessions(): Promise<string[]> {
+    if (this.#sweeping) return []
+    this.#sweeping = true
+    try {
+      const now = this.#now()
+      const expired = [...this.#sessions.values()].filter(
+        (session) =>
+          !session.closed &&
+          (now - session.lastActivityAtMs > this.#idleTimeoutMs ||
+            now - session.createdAtMs > this.#maxLifetimeMs),
+      )
+      const ended: string[] = []
+      for (const session of expired) {
+        await this.end(session.matchId)
+        ended.push(session.matchId)
+      }
+      return ended
+    } finally {
+      this.#sweeping = false
     }
   }
 

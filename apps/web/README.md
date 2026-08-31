@@ -2,7 +2,8 @@
 
 The React UI starts a real server-hosted Game Master match. Phaser owns the
 small, stable endless-run shell: auto-run, jump, shard collection, scoring,
-one-hit death, and restart. It accepts only obstacle patches translated through
+one-hit death, and restart. It accepts only typed runner configurations and
+telegraphed hazard waves translated through
 the typed client contract; it never executes agent-authored code.
 
 The client polls compact match snapshots and uses the SSE stream for agent

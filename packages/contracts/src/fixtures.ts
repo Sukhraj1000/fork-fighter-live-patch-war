@@ -209,3 +209,63 @@ export const debtCollectorMutationFixture = MutationDefinitionSchema.parse({
     },
   ],
 })
+
+export const upsideDownForkStormMutationFixture = MutationDefinitionSchema.parse({
+  id: 'upside-down-fork-storm',
+  title: 'Upside-Down Fork Storm',
+  patchNote: 'Gravity flips while telegraphed forks sweep the ceiling lane.',
+  author: 'gremlin',
+  durationMs: 12_000,
+  difficultyCost: 2.25,
+  triggers: [
+    {
+      id: 'flip-runner',
+      type: 'onActivation',
+      effects: [
+        {
+          type: 'configureRunner',
+          gravityMode: 'inverted',
+          jumpMultiplier: 0.9,
+          speedMultiplier: 1,
+          scaleMultiplier: 0.9,
+          rotationMode: 'flipped',
+          worldStyle: 'void',
+          tag: 'upside-down-fork-storm:runner',
+        },
+      ],
+    },
+    {
+      id: 'rain-forks',
+      type: 'onInterval',
+      everyMs: 3_000,
+      effects: [
+        {
+          type: 'spawnRunnerHazard',
+          hazard: 'fork_storm',
+          lane: 'ceiling',
+          count: 1,
+          spacingMs: 500,
+          speedMultiplier: 1,
+          telegraphMs: 900,
+          tag: 'upside-down-fork-storm:forks',
+        },
+      ],
+    },
+  ],
+  limits: {
+    maxTriggerActivations: 5,
+    maxSpawnedEntities: 4,
+  },
+  cleanup: [
+    {
+      type: 'restoreRulesByTag',
+      tag: 'upside-down-fork-storm:runner',
+      when: 'expiry',
+    },
+    {
+      type: 'removeEntitiesByTag',
+      tag: 'upside-down-fork-storm:forks',
+      when: 'expiry',
+    },
+  ],
+})

@@ -1,7 +1,76 @@
-import { MutationProposalSchema } from '@fork-fighter/contracts'
+import {
+  ConfigureRunnerEffectSchema,
+  GameMasterPersonaSchema,
+  IdentifierSchema,
+  SpawnRunnerHazardEffectSchema,
+} from '@fork-fighter/contracts'
 import { z } from 'zod'
 
 export type MutationProposalJsonSchema = Readonly<Record<string, unknown>>
+
+const RunnerEffectSchema = z.discriminatedUnion('type', [
+  ConfigureRunnerEffectSchema,
+  SpawnRunnerHazardEffectSchema,
+])
+const runnerEffects = z.array(RunnerEffectSchema).min(1).max(2)
+
+const RunnerTriggerSchema = z
+  .object({
+    id: IdentifierSchema,
+    type: z.literal('onActivation'),
+    effects: runnerEffects,
+  })
+  .strict()
+
+const RunnerCleanupSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('removeEntitiesByTag'),
+      tag: IdentifierSchema,
+      when: z.literal('expiry'),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('restoreRulesByTag'),
+      tag: IdentifierSchema,
+      when: z.literal('expiry'),
+    })
+    .strict(),
+])
+
+/**
+ * Daytona advertises only the runner capabilities implemented by the browser.
+ * A narrow output schema cuts model latency while remaining a strict subset of
+ * the frozen MutationProposal contract parsed by the scoped gateway.
+ */
+const RunnerMutationProposalOutputSchema = z
+  .object({
+    proposalId: IdentifierSchema,
+    requestId: IdentifierSchema,
+    author: GameMasterPersonaSchema,
+    mutation: z
+      .object({
+        id: IdentifierSchema,
+        title: z.string().min(1).max(80),
+        patchNote: z.string().min(1).max(200),
+        author: GameMasterPersonaSchema,
+        durationMs: z.number().int().min(1_000).max(20_000),
+        difficultyCost: z.number().finite().positive().max(3),
+        triggers: z.array(RunnerTriggerSchema).length(1),
+        limits: z
+          .object({
+            maxTriggerActivations: z.literal(1),
+            maxSpawnedEntities: z.number().int().positive().max(3),
+          })
+          .strict(),
+        cleanup: z.array(RunnerCleanupSchema).min(1).max(2),
+      })
+      .strict(),
+    summary: z.string().min(1).max(240),
+    expectedImpact: z.string().min(1).max(240),
+  })
+  .strict()
 
 let cachedSchema: MutationProposalJsonSchema | undefined
 
@@ -45,20 +114,19 @@ function normaliseForCodex(value: unknown): unknown {
 }
 
 /**
- * The schema sent to Codex is generated from the frozen runtime contract. The
- * server still parses the result with Zod because JSON Schema cannot represent
- * every cross-field refinement in the contract.
+ * The server still parses returned data with the full Zod contract because JSON
+ * Schema cannot represent every author, cleanup, novelty, or playability rule.
  */
 export function mutationProposalJsonSchema(): MutationProposalJsonSchema {
   cachedSchema ??= Object.freeze({
     ...(normaliseForCodex(
-      z.toJSONSchema(MutationProposalSchema, {
+      z.toJSONSchema(RunnerMutationProposalOutputSchema, {
         target: 'draft-7',
         unrepresentable: 'any',
       }),
     ) as Record<string, unknown>),
-    $id: 'https://fork-fighter.dev/schemas/mutation-proposal.v1.json',
-    title: 'Fork Fighter MutationProposal',
+    $id: 'https://fork-fighter.dev/schemas/runner-mutation-proposal.v1.json',
+    title: 'Fork Fighter Runner MutationProposal',
   })
 
   return cachedSchema

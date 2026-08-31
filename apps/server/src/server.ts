@@ -191,6 +191,18 @@ function resolveDependencies(
       overrides.logStore ??
       new JsonlMatchLogStore(
         resolve(options.logDirectory ?? process.env.MATCH_LOG_DIR ?? 'data/matches'),
+        {
+          maxBytes: positiveInteger(
+            process.env.MATCH_LOG_MAX_BYTES,
+            8 * 1024 * 1024,
+            'MATCH_LOG_MAX_BYTES',
+          ),
+          maxFiles: positiveInteger(
+            process.env.MATCH_LOG_MAX_FILES,
+            3,
+            'MATCH_LOG_MAX_FILES',
+          ),
+        },
       ),
     clock: overrides.clock ?? systemClock,
     idGenerator: overrides.idGenerator ?? randomUUID,
@@ -198,7 +210,7 @@ function resolveDependencies(
       overrides.cadenceMs ??
       positiveInteger(
         process.env.MATCH_PATCH_CADENCE_MS,
-        daytonaMode ? 25_000 : 6_000,
+        daytonaMode ? 21_000 : 6_000,
         'MATCH_PATCH_CADENCE_MS',
       ),
     proposalDeadlineMs:
@@ -245,7 +257,24 @@ export function createMatchServer(options: MatchServerOptions = {}): MatchServer
   const gameStates = new LiveGameStateStore()
   const dependencies = resolveDependencies(options, gameStates)
   const host = new MatchHost(dependencies)
-  const live = new LiveMatchCoordinator(host, gameStates, options.live)
+  const live = new LiveMatchCoordinator(host, gameStates, {
+    idleTimeoutMs: positiveInteger(
+      process.env.MATCH_IDLE_TIMEOUT_MS,
+      60_000,
+      'MATCH_IDLE_TIMEOUT_MS',
+    ),
+    maxLifetimeMs: positiveInteger(
+      process.env.MATCH_MAX_LIFETIME_MS,
+      10 * 60_000,
+      'MATCH_MAX_LIFETIME_MS',
+    ),
+    sweepEveryMs: positiveInteger(
+      process.env.MATCH_SWEEP_INTERVAL_MS,
+      15_000,
+      'MATCH_SWEEP_INTERVAL_MS',
+    ),
+    ...options.live,
+  })
   const provider = gameMasterProvider(options)
 
   app.get('/health', async () => ({ status: 'ok' }))

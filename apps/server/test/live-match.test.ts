@@ -10,6 +10,88 @@ import {
 import { ManualClock } from './helpers.js'
 
 describe('playable integration loop', () => {
+  it('expires an abandoned live match, closes workers once, and honours recent telemetry', async () => {
+    let now = 1_000
+    const baseBrains = adaptAgentBrains(createMockGameMasterBrains())
+    const closed: string[] = []
+    const server = createMatchServer({
+      dependencies: {
+        agents: baseBrains.map((agent) => ({
+          persona: agent.persona,
+          propose: (request, signal) => agent.propose(request, signal),
+          async closeMatch(matchId) {
+            closed.push(`${agent.persona}:${matchId}`)
+          },
+        })),
+      },
+      live: {
+        autoTick: false,
+        autoSweep: false,
+        idleTimeoutMs: 1_000,
+        maxLifetimeMs: 5_000,
+        now: () => now,
+      },
+    })
+
+    try {
+      await server.live.create({ matchId: 'idle-expiry', autoStart: false })
+      now = 1_800
+      await server.live.ingestRunnerTelemetry('idle-expiry', {
+        elapsedMs: 800,
+        pickups: 0,
+        score: 80,
+        alive: true,
+      })
+
+      now = 2_700
+      expect(await server.live.sweepStaleSessions()).toEqual([])
+      expect(server.live.getSnapshot('idle-expiry').match.status).toBe('running')
+
+      now = 2_801
+      expect(await server.live.sweepStaleSessions()).toEqual(['idle-expiry'])
+      expect(server.live.getSnapshot('idle-expiry').match.status).toBe('ended')
+      expect(await server.live.sweepStaleSessions()).toEqual([])
+      expect(closed.sort()).toEqual([
+        'architect:idle-expiry',
+        'auditor:idle-expiry',
+        'gremlin:idle-expiry',
+      ])
+    } finally {
+      await server.app.close()
+    }
+  })
+
+  it('expires a live match at its absolute lifetime even while telemetry remains active', async () => {
+    let now = 10_000
+    const server = createMatchServer({
+      live: {
+        autoTick: false,
+        autoSweep: false,
+        idleTimeoutMs: 2_000,
+        maxLifetimeMs: 3_000,
+        now: () => now,
+      },
+    })
+
+    try {
+      await server.live.create({ matchId: 'lifetime-expiry', autoStart: false })
+      now = 12_500
+      await server.live.ingestRunnerTelemetry('lifetime-expiry', {
+        elapsedMs: 2_500,
+        pickups: 1,
+        score: 350,
+        alive: true,
+      })
+      expect(await server.live.sweepStaleSessions()).toEqual([])
+
+      now = 13_001
+      expect(await server.live.sweepStaleSessions()).toEqual(['lifetime-expiry'])
+      expect(server.live.getSnapshot('lifetime-expiry').match.status).toBe('ended')
+    } finally {
+      await server.app.close()
+    }
+  })
+
   it('feeds actual endless-run score and survival telemetry into Game Master context', async () => {
     const clock = new ManualClock()
     const server = createMatchServer({
@@ -84,7 +166,7 @@ describe('playable integration loop', () => {
 
       const preparedLog = await server.host.readLog('live-integration')
       expect(preparedLog.filter(({ type }) => type === 'proposal_received')).toHaveLength(3)
-      expect(preparedLog.filter(({ type }) => type === 'proposal_rejected')).toHaveLength(2)
+      expect(preparedLog.filter(({ type }) => type === 'proposal_rejected')).toHaveLength(1)
       expect(preparedLog.find(({ type }) => type === 'proposal_selected')?.data).toMatchObject({
         author: 'gremlin',
       })
@@ -100,7 +182,15 @@ describe('playable integration loop', () => {
           direction: { x: 1, y: 0 },
         })
       }
-      expect(server.live.getSnapshot('live-integration').runtime.entities.length).toBeGreaterThan(0)
+      expect(
+        server.live
+          .getSnapshot('live-integration')
+          .recentEvents.some(
+            (event) =>
+              event.type === 'patch_effect_applied' &&
+              event.effect === 'spawnRunnerHazard',
+          ),
+      ).toBe(true)
 
       for (let index = 0; index < 4; index += 1) {
         await server.live.step('live-integration', { type: 'wait' })

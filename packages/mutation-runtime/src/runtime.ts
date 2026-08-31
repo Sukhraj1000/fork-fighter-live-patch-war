@@ -5,6 +5,8 @@ import {
   type GameEvent,
   type GameState,
   type MutationDefinition,
+  type MutationEffect,
+  type MutationTrigger,
   type OnCoreCollectedTrigger,
   type SpawnCollectorEffect,
   type Vector2,
@@ -55,31 +57,98 @@ function assertOrderedBoundary(
 
 function assertSupportedDefinition(mutation: MutationDefinition): void {
   for (const trigger of mutation.triggers) {
-    if (trigger.type !== 'onCoreCollected') {
+    if (
+      trigger.type !== 'onCoreCollected' &&
+      trigger.type !== 'onActivation' &&
+      trigger.type !== 'onInterval'
+    ) {
       throw new MutationRuntimeError(
         'unsupported_trigger',
-        `Mutation runtime v1 does not support trigger ${trigger.type}`,
+        `Mutation runtime does not support trigger ${trigger.type}`,
       )
     }
 
     for (const effect of trigger.effects) {
-      if (effect.type !== 'spawnCollector') {
+      const supported =
+        (trigger.type === 'onCoreCollected' && effect.type === 'spawnCollector') ||
+        ((trigger.type === 'onActivation' || trigger.type === 'onInterval') &&
+          (effect.type === 'configureRunner' || effect.type === 'spawnRunnerHazard'))
+      if (!supported) {
         throw new MutationRuntimeError(
           'unsupported_effect',
-          `Mutation runtime v1 does not support effect ${effect.type}`,
+          `Mutation runtime does not support ${effect.type} on ${trigger.type}`,
         )
       }
     }
   }
 
   for (const cleanup of mutation.cleanup) {
-    if (cleanup.type !== 'removeEntitiesByTag') {
+    if (
+      cleanup.type !== 'removeEntitiesByTag' &&
+      cleanup.type !== 'restoreRulesByTag'
+    ) {
       throw new MutationRuntimeError(
         'unsupported_cleanup',
-        `Mutation runtime v1 does not support cleanup ${cleanup.type}`,
+        `Mutation runtime does not support cleanup ${cleanup.type}`,
       )
     }
   }
+}
+
+function runnerEffectIds(
+  state: MutationRuntimeState,
+  effect: MutationEffect,
+): string[] {
+  if (effect.type === 'configureRunner') return ['runner-player']
+  if (effect.type !== 'spawnRunnerHazard') return []
+  return Array.from({ length: effect.count }, () => {
+    const id = `runner-hazard:${String(state.nextEntitySequence).padStart(6, '0')}`
+    state.nextEntitySequence += 1
+    return id
+  })
+}
+
+function dispatchRunnerTrigger(
+  state: MutationRuntimeState,
+  active: ActiveMutation,
+  trigger: MutationTrigger,
+  boundary: MutationBoundary,
+): GameEvent[] {
+  if (activationTotal(active) >= active.definition.limits.maxTriggerActivations) {
+    return []
+  }
+  incrementTriggerActivation(active, trigger.id)
+  return trigger.effects.map((effect) => ({
+    type: 'patch_effect_applied' as const,
+    tick: boundary.tick,
+    atMs: boundary.atMs,
+    mutationId: active.definition.id,
+    triggerId: trigger.id,
+    effect: effect.type,
+    affectedIds: runnerEffectIds(state, effect),
+  }))
+}
+
+function dispatchDueIntervals(
+  state: MutationRuntimeState,
+  boundary: MutationBoundary,
+): GameEvent[] {
+  const active = state.activeMutation
+  if (!active) return []
+  const events: GameEvent[] = []
+  for (const trigger of active.definition.triggers) {
+    if (trigger.type !== 'onInterval') continue
+    const activation = active.triggerActivations.find(({ triggerId }) => triggerId === trigger.id)
+    if (!activation) continue
+    const due = Math.floor((boundary.atMs - active.activatedAtMs) / trigger.everyMs)
+    while (
+      activation.count < due &&
+      activationTotal(active) < active.definition.limits.maxTriggerActivations
+    ) {
+      events.push(...dispatchRunnerTrigger(state, active, trigger, boundary))
+    }
+  }
+  return events
 }
 
 function activationTotal(active: ActiveMutation): number {
@@ -260,13 +329,7 @@ function dispatchCoreCollected(
 }
 
 function cleanupTags(mutation: MutationDefinition): string[] {
-  return [
-    ...new Set(
-      mutation.cleanup
-        .filter((cleanup) => cleanup.type === 'removeEntitiesByTag')
-        .map((cleanup) => cleanup.tag),
-    ),
-  ]
+  return [...new Set(mutation.cleanup.map((cleanup) => cleanup.tag))]
 }
 
 export function createMutationRuntimeState(): MutationRuntimeState {
@@ -314,20 +377,24 @@ export function activateMutation(
     })),
   }
   state.lastBoundary = { ...boundary }
-
-  return {
-    state,
-    events: [
-      {
-        type: 'patch_activated',
-        tick: boundary.tick,
-        atMs: boundary.atMs,
-        mutationId: mutation.id,
-        author: mutation.author,
-        expiresAtMs,
-      },
-    ],
+  const events: GameEvent[] = [
+    {
+      type: 'patch_activated',
+      tick: boundary.tick,
+      atMs: boundary.atMs,
+      mutationId: mutation.id,
+      author: mutation.author,
+      expiresAtMs,
+    },
+  ]
+  const active = state.activeMutation
+  for (const trigger of active.definition.triggers) {
+    if (trigger.type === 'onActivation') {
+      events.push(...dispatchRunnerTrigger(state, active, trigger, boundary))
+    }
   }
+
+  return { state, events }
 }
 
 export function advanceMutationRuntime(
@@ -340,8 +407,9 @@ export function advanceMutationRuntime(
   state.lastBoundary = { ...boundary }
   const active = state.activeMutation
 
-  if (!active || boundary.atMs < active.expiresAtMs) {
-    return { state, events: [] }
+  if (!active) return { state, events: [] }
+  if (boundary.atMs < active.expiresAtMs) {
+    return { state, events: dispatchDueIntervals(state, boundary) }
   }
 
   const tags = cleanupTags(active.definition)

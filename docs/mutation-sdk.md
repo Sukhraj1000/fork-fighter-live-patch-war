@@ -33,7 +33,7 @@ provider, browser, or network request.
 |---|---|
 | Authors | `architect`, `gremlin`, `auditor` |
 | Triggers | `onActivation`, `onCoreCollected`, `onCoreBanked`, `onInterval` |
-| Effects | `spawnCollector`, `relocateHazard`, `spawnBonusCore`, `modifyRule`, `adjustExtractionRequirement` |
+| Effects | `spawnCollector`, `relocateHazard`, `spawnBonusCore`, `modifyRule`, `adjustExtractionRequirement`, `configureRunner`, `spawnRunnerHazard` |
 | Objectives | `bankAdditionalCores`, `collectRiskyCores`, `survive` |
 | Cleanup | `removeEntitiesByTag`, `restoreEntitiesByTag`, `restoreRulesByTag` |
 
@@ -58,12 +58,20 @@ spawn checks, and deterministic micro-simulation before selection.
 
 ## Canonical example
 
-`debtCollectorMutationFixture` defines the first runtime slice:
+`debtCollectorMutationFixture` preserves the original deterministic collector
+slice. `upsideDownForkStormMutationFixture` defines the live runner-demand slice:
 
 ```text
 onCoreCollected
   -> spawnCollector(count: 1, tag: debt-collector:collectors)
   -> removeEntitiesByTag(tag: debt-collector:collectors) on expiry
+
+onActivation
+  -> configureRunner(gravity: inverted, rotation: flipped)
+onInterval
+  -> spawnRunnerHazard(kind: fork_storm, lane: ceiling)
+on expiry
+  -> restoreRulesByTag + removeEntitiesByTag
 ```
 
 The fixture is parsed at module initialization, so it cannot silently drift

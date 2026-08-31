@@ -150,6 +150,7 @@ export function adaptLiveMatch(
       durationSeconds: Math.ceil((mutation?.durationMs ?? 0) / 1_000),
       ...(countdownSeconds === undefined ? {} : { countdownSeconds }),
       difficulty: mutation?.difficultyCost ?? 0,
+      ...(mutation ? { mutation } : {}),
     },
     activity,
   }

@@ -15,8 +15,8 @@ While the player runs, three Game Masters independently author typed mutations:
 
 The three proposals are produced concurrently. The server validates every
 candidate and allows at most one live patch at a time. Accepted mutations are
-translated through the browser's obstacle-only adapter; agents never edit or
-execute game code.
+translated through the browser's fixed runner-demand interpreter; agents never
+edit or execute game code.
 
 ## Player loop
 
@@ -26,7 +26,8 @@ Start run
   -> auto-run and jump
   -> collect Fork Shards
   -> score rises with survival time + pickups
-  -> Game Master obstacle patches enter the route
+  -> the referee selects one physics/hazard demand
+  -> gravity, runner presentation, or object attacks change temporarily
   -> one collision ends the run
   -> final score + personal best
   -> restart
@@ -64,7 +65,7 @@ canonical server functions.
 
 ## Stable shell
 
-The Phaser shell owns the fixed rules:
+The Phaser shell owns the fixed rules and safe effect interpreter:
 
 - automatic forward motion;
 - buffered jump input;
@@ -74,9 +75,23 @@ The Phaser shell owns the fixed rules:
 - score calculation;
 - countdown, game-over state, personal best, and restart.
 
-A short grace period teaches the control before the first hazard. Collision
-bounds and the pacing ramp are deliberately more forgiving at the beginning,
-then tighten as survival time increases.
+The interpreter exposes two bounded effects to Game Masters:
+
+- `configureRunner`: normal, moon, inverted, or zero gravity; bounded jump,
+  world-speed, and character-scale multipliers; upright, flipped, or spinning
+  presentation; normal, neon, void, or sunset world style.
+- `spawnRunnerHazard`: one to three telegraphed boulders, spike rows, moving
+  walls, falling anvils, rubber ducks, or fork storms in ground, air, or ceiling
+  lanes.
+
+Each effect owns an expiry tag. Physics and visuals restore to defaults and all
+mutation-owned hazards are removed when the patch expires.
+
+A short start signal teaches the control, followed by twenty-five seconds of
+collision protection while the runner, pickups and first Game Master cycle stay
+fully visible. Collision bounds and the pacing ramp then tighten as survival
+time increases. This guarantees that an ordinary run reaches its first live
+patch instead of ending while Daytona workers are still drafting.
 
 ## Typed mutation boundary
 
@@ -88,6 +103,11 @@ capabilities advertised by the server.
 The current live runtime advertises only capabilities it can execute safely.
 Contract-valid effects outside that slice are rejected visibly rather than
 silently ignored.
+
+Runner-specific referee rules require a warning window, prevent overlapping
+interval waves, cap speed/scale/duration, reject no-op configurations, allow
+runner physics to change only once per patch, and preserve the global one-live-
+patch limit.
 
 ## Validation and turn-taking
 
@@ -123,6 +143,11 @@ Workers receive only three host-written files:
 The host reads only `runtime/proposal.json`. A one-use scoped gateway consumes
 each grant even when output is malformed, late, replayed, or cross-persona.
 Private workers are deleted at match end and also carry a TTL backstop.
+The server also treats abandoned browser sessions as match end: 60 seconds
+without player telemetry or commands closes the match, while a ten-minute
+absolute lifetime is the final backstop. Per-match JSONL logs rotate at 8 MiB
+with three files retained, preventing an unattended session from consuming
+unbounded disk space.
 
 ## Codex authentication
 
@@ -207,7 +232,13 @@ tests/e2e                 Playwright product-path coverage
   through HUD overlays;
 - the local fallback stays playable with the API route unavailable;
 - runner telemetry reaches Game Master context;
+- the selected demand changes runner physics and hazard type, then restores the
+  stable baseline on expiry;
 - only one mutation can remain active.
+- the deterministic `?demo=seeded` path visibly includes both a rejected
+  candidate and an accepted live patch;
+- expired patches return their reserved difficulty cost, abandoned sessions
+  close match-scoped workers, and JSONL logs remain bounded.
 
 The separate Daytona smoke command must create a real private sandbox from the
 prepared snapshot, execute the installed health command, and delete the sandbox.

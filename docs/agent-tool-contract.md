@@ -37,6 +37,20 @@ mutation capabilities, rejected/recent concept ids, and at most eight history
 entries for that same persona. It does not contain player controls, engine
 objects, server functions, credentials, or unrestricted conversation history.
 
+The current playable capability slice is data-only:
+
+- `configureRunner` selects bounded gravity, jump, speed, scale, rotation, and
+  world-style values;
+- `spawnRunnerHazard` selects a bounded object, lane, count, spacing, speed, and
+  mandatory telegraph window;
+- triggers are limited to activation or bounded intervals;
+- every temporary rule or object group requires matching expiry cleanup.
+
+The Game Masters can therefore demand dramatic combinations such as inverted
+gravity plus a ceiling fork storm or zero gravity plus falling anvils, but they
+cannot add code, invent engine calls, bypass collision, or activate a second
+patch. The authoritative validator remains the referee.
+
 The SDK adapter permits exactly two installed commands:
 
 - `./bin/test-worker` verifies the prepared image and installed schema.
@@ -111,7 +125,7 @@ Create the Daytona organization secret first, then build the snapshot once:
 
 ```bash
 export DAYTONA_API_KEY=...
-export DAYTONA_WORKER_SNAPSHOT=fork-fighter-game-master-codex-v4
+export DAYTONA_WORKER_SNAPSHOT=fork-fighter-game-master-codex-v9
 pnpm --filter @fork-fighter/gm-orchestrator prepare:snapshot
 ```
 
